@@ -1,0 +1,27 @@
+# Python 캐시 파일
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook 체크포인트
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# 특정 디렉토리
+src/study/
+src/timesentinel/
+
+# macOS 파일
+.DS_Store
+*/.DS_Store
+
+# LangGraph 파일
+src/.langgraph_api/
+
+# 기타 임시 파일
+*.so
+*.dylib
+*.egg
+*.egg-info/
+.installed.cfg
+*.egg
