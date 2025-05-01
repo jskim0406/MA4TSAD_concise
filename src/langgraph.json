@@ -1,0 +1,10 @@
+{
+  "schema_version": "v1",
+  "graphs": {
+    "federated_sentinel": "graph:graph"
+  },
+  "dependencies": [
+    "./federated_sentinel"
+  ],
+  "env": "../.env"
+}
