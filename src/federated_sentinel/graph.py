@@ -176,8 +176,8 @@ def _convert_messages(messages):
 
     return converted
 
-# LangGraph 서버 진입점 함수
-@traceable(name="process_federated_sentinel_request") # 추적 이름 추가
+# langgraph server 진입점 함수
+@traceable
 def process_ts_data(input_data: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Process time series data through the Federated Sentinel workflow.

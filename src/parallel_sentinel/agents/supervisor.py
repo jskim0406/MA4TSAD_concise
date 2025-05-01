@@ -149,7 +149,7 @@ def create_supervisor_agent(llm: BaseChatModel):
             print("Supervisor: 시계열 데이터 분해 수행 중...")
             
             # 분해 도구 호출
-            decomposition_result_str = decompose_time_series(state["ts_data"])
+            decomposition_result_str = decompose_time_series.invoke({"data": state["ts_data"]})
             decomposition_result = json.loads(decomposition_result_str)
             
             # 상태 업데이트에 분해 데이터 추가

@@ -4,7 +4,7 @@
 
 import os
 import operator
-from typing import Annotated, List, Dict, Any, Optional, TypedDict, Union, Sequence
+from typing import Annotated, List, Dict, Any, Optional, TypedDict, Union, Sequence, Literal
 from dotenv import load_dotenv, find_dotenv
 
 # 환경 변수 로드
@@ -28,8 +28,8 @@ class TimeSeriesState(TypedDict):
     """병렬 에이전트 워크플로우를 위한 시계열 분석 상태"""
     # 원본 시계열 데이터
     ts_data: List[float]
-    # 에이전트 간 전달되는 메시지들
-    messages: List[BaseMessage]
+    # 에이전트 간 전달되는 메시지들 (Annotated와 operator.add 적용)
+    messages: Annotated[List[BaseMessage], operator.add]
     # 시계열 분해 결과 (각 에이전트가 채워넣음)
     decomposition_data: Dict[str, Any]
     # 추세 분석 결과 (trend_analyzer가 추가)
@@ -67,52 +67,64 @@ def create_workflow(
     """
     # 그래프 생성
     workflow = StateGraph(TimeSeriesState)
-    
+
     # 그래프에 노드 추가
     workflow.add_node("supervisor", supervisor_agent)
     workflow.add_node("trend_analyzer", trend_analyzer_agent)
     workflow.add_node("seasonality_analyzer", seasonality_analyzer_agent)
     workflow.add_node("remainder_analyzer", remainder_analyzer_agent)
-    
-    # 워크플로우 시작점 정의: Start -> Supervisor (초기 상태 확인 및 데이터 분해)
+
+    # 워크플로우 시작점 정의: Start -> Supervisor
     workflow.add_edge(START, "supervisor")
-    
-    # 병렬 처리를 위한 Fan-Out: Supervisor -> 각 분석 에이전트
-    workflow.add_edge("supervisor", "trend_analyzer")
-    workflow.add_edge("supervisor", "seasonality_analyzer")
-    workflow.add_edge("supervisor", "remainder_analyzer")
-    
+
     # 분석 결과를 취합하기 위한 Fan-In: 각 분석 에이전트 -> Supervisor
+    # 이 엣지들은 분석 에이전트가 작업을 완료한 후 supervisor를 다시 호출하도록 합니다.
     workflow.add_edge("trend_analyzer", "supervisor")
     workflow.add_edge("seasonality_analyzer", "supervisor")
     workflow.add_edge("remainder_analyzer", "supervisor")
-    
-    # 워크플로우 종료 조건: Supervisor -> END
-    # (모든 분석 결과가 있는 경우 종료)
-    def should_end(state: TimeSeriesState) -> bool:
-        """워크플로우 종료 조건 확인"""
+
+    # Supervisor 실행 후 다음 단계를 결정하는 라우팅 함수 정의
+    def route_after_supervisor(state: TimeSeriesState) -> Union[List[str], Literal[END]]:
+        """Supervisor 노드 실행 후 다음 단계를 결정합니다."""
         has_trend = len(state["trend_analysis"]) > 0
         has_seasonality = len(state["seasonality_analysis"]) > 0
         has_remainder = len(state["remainder_analysis"]) > 0
+        # supervisor_agent가 모든 분석 결과를 바탕으로 final_analysis를 생성했는지 확인
         has_final = state["final_analysis"] is not None
-        
-        # 모든 분석이 완료되고 최종 분석이 있는 경우 종료
-        return has_trend and has_seasonality and has_remainder and has_final
-    
+
+        if has_final:
+            # 최종 분석이 생성되었다면 워크플로우 종료
+            print("Router: 최종 분석 완료됨. 워크플로우 종료.")
+            return END
+        else:
+            # 분석이 완료되지 않았거나 최종 분석이 아직 생성되지 않았다면,
+            # 모든 분석 에이전트를 병렬로 실행합니다.
+            # supervisor 에이전트 자체가 초기 분해 로직을 처리합니다.
+            print("Router: 분석 미완료 또는 최종 요약 미생성. 분석 에이전트로 팬아웃.")
+            # 병렬 실행을 위해 노드 이름 리스트 반환
+            return ["trend_analyzer", "seasonality_analyzer", "remainder_analyzer"]
+
+    # Supervisor에서 나가는 조건부 엣지 설정
+    # supervisor 노드 실행 후 route_after_supervisor 함수 결과에 따라 분기합니다.
     workflow.add_conditional_edges(
         "supervisor",
-        should_end,
-        {
-            True: END,
-            False: None  # 종료 조건이 만족되지 않으면 다른 에지로 이동
-        }
+        route_after_supervisor
+        # 라우팅 함수가 직접 대상 노드 이름 리스트 또는 END를 반환하므로,
+        # 여기서는 매핑 딕셔너리가 필요 없습니다.
     )
-    
+
     # 그래프 컴파일 및 반환
     print("병렬 워크플로우 컴파일 중...")
-    compiled_workflow = workflow.compile()
-    print("워크플로우 컴파일 완료.")
-    return compiled_workflow
+    try:
+        compiled_workflow = workflow.compile()
+        print("워크플로우 컴파일 완료.")
+        return compiled_workflow
+    except Exception as e:
+        print(f"오류: 워크플로우 생성 실패: {e}") # 컴파일 오류 시 상세 메시지 출력
+        # 필요시 여기서 더 자세한 디버깅 정보 출력 가능
+        # import traceback
+        # traceback.print_exc()
+        raise # 오류를 다시 발생시켜 호출자에게 알림
 
 
 @traceable
@@ -128,27 +140,26 @@ def run_workflow(workflow, time_series_data: Union[List[float], Dict[str, Any]],
     Returns:
         Dict[str, Any]: 워크플로우의 최종 상태
     """
-    # 입력이 완전한 상태 딕셔너리인지 확인
+    # 초기 상태 설정 시 decomposition_data를 빈 dict로 초기화하는 것이 중요
     if isinstance(time_series_data, dict) and "messages" in time_series_data:
-        initial_state = time_series_data
+         initial_state = time_series_data
+         if "decomposition_data" not in initial_state:
+             initial_state["decomposition_data"] = {} # 누락 시 추가
     else:
-        # 시계열 데이터로 초기 상태 생성
-        initial_state = {
-            "ts_data": time_series_data,
-            "messages": [
-                HumanMessage(content=f"이 시계열 데이터를 분석해주세요: {time_series_data[:10]}... (길이: {len(time_series_data)})")
-            ],
-            "decomposition_data": {},
-            "trend_analysis": [],
-            "seasonality_analysis": [],
-            "remainder_analysis": [],
-            "final_analysis": None,
-            "config": kwargs.pop("config", {})
-        }
-    
-    # 워크플로우 실행
+         initial_state = {
+             "ts_data": time_series_data,
+             "messages": [
+                 HumanMessage(content=f"이 시계열 데이터를 분석해주세요: {time_series_data[:10]}... (길이: {len(time_series_data)})")
+             ],
+             "decomposition_data": {}, # 명시적 초기화
+             "trend_analysis": [],
+             "seasonality_analysis": [],
+             "remainder_analysis": [],
+             "final_analysis": None,
+             "config": kwargs.pop("config", {})
+         }
+
     print(f"병렬 워크플로우 실행 시작 - 시계열 데이터 길이: {len(initial_state['ts_data'])}")
     final_state = workflow.invoke(initial_state, **kwargs)
     print("병렬 워크플로우 실행 완료")
-    
     return final_state

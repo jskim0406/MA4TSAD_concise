@@ -53,7 +53,7 @@ LOCATION = os.getenv("GOOGLE_CLOUD_REGION", "us-central1")
 MODEL_NAME_G = os.getenv("GOOGLE_GEN_MODEL", "gemini-2.5-flash-preview-04-17")
 
 @traceable
-def main():
+def main_fed():
     """
     Main function to demonstrate the Federated Sentinel library.
     """
@@ -217,4 +217,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main_fed()

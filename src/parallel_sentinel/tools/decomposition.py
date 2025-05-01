@@ -1,7 +1,3 @@
-"""
-시계열 분해 도구
-"""
-
 import json
 import numpy as np
 import pandas as pd
@@ -12,67 +8,85 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 from datetime import datetime
 from pathlib import Path
 
-from statsmodels.tsa.seasonal import seasonal_decompose
-from statsmodels.tsa.stl import STL
+from statsmodels.tsa.seasonal import seasonal_decompose, STL 
 from scipy import signal
 
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field # Pydantic import 추가
 
+# --- 수동 스키마 정의 ---
+decomposition_args_schema = {
+    "type": "object",
+    "properties": {
+        "data": {
+            "type": "array",
+            "items": {"type": "number"},
+            "description": "분해할 시계열 데이터"
+        },
+        "method": {
+            "type": "string",
+            "description": '분해 방법 ("stl" 또는 "seasonal_decompose")',
+            "default": "stl"
+        },
+        "period": {
+            # Google API가 integer 타입을 어떻게 표현하는지에 따라 "integer" 또는 "number" 사용
+            # nullable: true 를 추가하여 Optional임을 명시
+            "type": "integer",
+            "nullable": True, # Optional[int]를 표현
+            "description": "계절성 주기. None이면 자동 탐지 시도",
+            "default": None
+        },
+        "model": {
+            "type": "string",
+            "description": '분해 모델 ("additive" 또는 "multiplicative")',
+            "default": "additive"
+        }
+    },
+    "required": ["data"]
+}
 
-@tool
+# --- @tool 데코레이터에 수동 스키마 적용 ---
+@tool(args_schema=decomposition_args_schema) # Pydantic 모델 대신 직접 정의한 dict 전달
 def decompose_time_series(
-    data: List[float], 
-    method: str = "stl", 
+    data: List[float],
+    method: str = "stl",
     period: Optional[int] = None,
     model: str = "additive"
 ) -> str:
     """
     시계열 데이터를 추세(trend), 계절성(seasonality), 잔차(remainder) 성분으로 분해합니다.
-    
-    Args:
-        data (List[float]): 분해할 시계열 데이터
-        method (str): 분해 방법 ("stl" 또는 "seasonal_decompose")
-        period (Optional[int]): 계절성 주기. None이면 자동 탐지 시도
-        model (str): 분해 모델 ("additive" 또는 "multiplicative")
-        
-    Returns:
-        str: 분해 결과와 시각화 경로가 포함된 JSON 문자열
+    (함수 내부 로직은 이전과 동일)
     """
     try:
         data_np = np.array(data)
-        
-        # 주기가 지정되지 않은 경우 자동 추정
+
         if period is None:
             period = _estimate_seasonality_period(data_np)
-        
-        # 분해 수행
+
         if method == "stl":
             result = _decompose_stl(data_np, period)
-        else:  # seasonal_decompose
+        else:
             result = _decompose_seasonal(data_np, period, model)
-        
-        # 결과 시각화
+
         fig_path = _visualize_decomposition(data_np, result, method, period)
-        
-        # 분해 결과 정리
+
         decomposition_result = {
-            "trend": result["trend"][:50].tolist() + result["trend"][-50:].tolist() if len(result["trend"]) > 100 else result["trend"].tolist(),
-            "seasonality": result["seasonality"][:50].tolist() + result["seasonality"][-50:].tolist() if len(result["seasonality"]) > 100 else result["seasonality"].tolist(),
-            "remainder": result["remainder"][:50].tolist() + result["remainder"][-50:].tolist() if len(result["remainder"]) > 100 else result["remainder"].tolist(),
-            "method": method,
-            "period": period,
-            "model": model,
-            "visualization_path": str(fig_path),
-            "stats": {
-                "trend_strength": _calculate_trend_strength(result["trend"], result["remainder"]),
-                "seasonality_strength": _calculate_seasonality_strength(result["seasonality"], result["remainder"]),
-                "remainder_strength": _calculate_remainder_strength(result["remainder"], data_np)
-            },
+             "trend": result["trend"][:50].tolist() + result["trend"][-50:].tolist() if len(result["trend"]) > 100 else result["trend"].tolist(),
+             "seasonality": result["seasonality"][:50].tolist() + result["seasonality"][-50:].tolist() if len(result["seasonality"]) > 100 else result["seasonality"].tolist(),
+             "remainder": result["remainder"][:50].tolist() + result["remainder"][-50:].tolist() if len(result["remainder"]) > 100 else result["remainder"].tolist(),
+             "method": method,
+             "period": period,
+             "model": model,
+             "visualization_path": str(fig_path),
+             "stats": {
+                 "trend_strength": _calculate_trend_strength(result["trend"], result["remainder"]),
+                 "seasonality_strength": _calculate_seasonality_strength(result["seasonality"], result["remainder"]),
+                 "remainder_strength": _calculate_remainder_strength(result["remainder"], data_np)
+             },
             "status": "success"
         }
-        
         return json.dumps(decomposition_result)
-    
+
     except Exception as e:
         error_message = f"시계열 분해 오류: {e}"
         return json.dumps({"status": "error", "message": error_message})
@@ -215,64 +229,51 @@ def _decompose_seasonal(data: np.ndarray, period: int, model: str) -> Dict[str, 
 
 
 def _visualize_decomposition(
-    data: np.ndarray, 
-    decomposition: Dict[str, np.ndarray], 
-    method: str, 
+    data: np.ndarray,
+    decomposition: Dict[str, np.ndarray],
+    method: str,
     period: int
 ) -> Path:
     """
     시계열 분해 결과를 시각화합니다.
-    
-    Args:
-        data (np.ndarray): 원본 시계열 데이터
-        decomposition (Dict[str, np.ndarray]): 분해 결과
-        method (str): 사용된 분해 방법
-        period (int): 계절성 주기
-        
-    Returns:
-        Path: 저장된 시각화 이미지 경로
     """
     fig, axes = plt.subplots(4, 1, figsize=(10, 10), sharex=True)
-    
-    # 원본 데이터
-    axes[0].plot(data, label='원본 데이터')
-    axes[0].set_title('원본 시계열')
+
+    # 원본 데이터 -> Original Data
+    axes[0].plot(data, label='Original Data')
+    axes[0].set_title('Original Time Series') # <-- 변경
     axes[0].grid(True, linestyle='--', alpha=0.6)
-    
-    # 추세 성분
-    axes[1].plot(decomposition["trend"], label='추세', color='blue')
-    axes[1].set_title('추세 성분')
+
+    # 추세 성분 -> Trend Component
+    axes[1].plot(decomposition["trend"], label='Trend', color='blue')
+    axes[1].set_title('Trend Component') # <-- 변경
     axes[1].grid(True, linestyle='--', alpha=0.6)
-    
-    # 계절성 성분
-    axes[2].plot(decomposition["seasonality"], label='계절성', color='green')
-    axes[2].set_title(f'계절성 성분 (주기: {period})')
+
+    # 계절성 성분 -> Seasonality Component
+    axes[2].plot(decomposition["seasonality"], label='Seasonality', color='green')
+    axes[2].set_title(f'Seasonality Component (Period: {period})') # <-- 변경
     axes[2].grid(True, linestyle='--', alpha=0.6)
-    
-    # 잔차 성분
-    axes[3].plot(decomposition["remainder"], label='잔차', color='red')
-    axes[3].set_title('잔차 성분')
+
+    # 잔차 성분 -> Remainder Component
+    axes[3].plot(decomposition["remainder"], label='Remainder', color='red')
+    axes[3].set_title('Remainder Component') # <-- 변경
     axes[3].grid(True, linestyle='--', alpha=0.6)
-    
-    # 전체 타이틀 설정
-    plt.suptitle(f'시계열 분해 ({method.upper()} 방법)', fontsize=16)
-    plt.tight_layout()
-    plt.subplots_adjust(top=0.92)
-    
-    # 이미지 저장
+
+    # 전체 타이틀 -> Overall Title
+    plt.suptitle(f'Time Series Decomposition ({method.upper()} Method)', fontsize=16) # <-- 변경
+    plt.tight_layout(rect=[0, 0, 1, 0.92]) # 여백 조정
+
+    # 이미지 저장 로직 (기존과 동일)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    
     try:
         img_dir = Path(__file__).resolve().parent.parent.parent.parent / "temp_images"
     except NameError:
         img_dir = Path("./temp_images")
-    
     img_dir.mkdir(parents=True, exist_ok=True)
     save_path = img_dir / f"decomposition_{timestamp}.png"
-    
     plt.savefig(save_path, dpi=100, bbox_inches='tight')
     plt.close(fig)
-    
+
     return save_path
 
 
