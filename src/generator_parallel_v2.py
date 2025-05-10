@@ -27,8 +27,9 @@ try:
     
     # Parallel Sentinel V2 구성 요소 임포트
     from parallel_sentinel_v2.agents import (
-        create_supervisor_agent, create_trend_analyzer_agent,
-        create_seasonality_analyzer_agent, create_remainder_analyzer_agent
+        create_supervisor_agent, create_original_time_series_analyzer_agent,
+        create_trend_analyzer_agent, create_seasonality_analyzer_agent,
+        create_remainder_analyzer_agent
     )
     # 도구 정의 - 카테고리별로 구분하여 바인딩
     from parallel_sentinel_v2.tools import (
@@ -185,6 +186,7 @@ def main():
     # 에이전트 생성
     try:
         supervisor = create_supervisor_agent(llm)
+        original_ts_analyzer = create_original_time_series_analyzer_agent(llm, tools)
         trend_analyzer = create_trend_analyzer_agent(llm, tools)
         seasonality_analyzer = create_seasonality_analyzer_agent(llm, tools)
         remainder_analyzer = create_remainder_analyzer_agent(llm, tools)
@@ -197,6 +199,7 @@ def main():
     try:
         workflow = create_workflow(
             supervisor_agent=supervisor,
+            original_time_series_analyzer_agent=original_ts_analyzer,
             trend_analyzer_agent=trend_analyzer,
             seasonality_analyzer_agent=seasonality_analyzer,
             remainder_analyzer_agent=remainder_analyzer,
@@ -313,6 +316,7 @@ def main():
             "quantization_info": quantize_info,
             "final_analysis_summary": analysis_summary,
             # 각 에이전트의 마지막 분석 결과 포함
+            "original_ts_analysis_details": final_state.get("original_ts_analysis", [{}])[-1],
             "trend_analysis_details": final_state.get("trend_analysis", [{}])[-1],
             "seasonality_analysis_details": final_state.get("seasonality_analysis", [{}])[-1],
             "remainder_analysis_details": final_state.get("remainder_analysis", [{}])[-1],

@@ -26,7 +26,7 @@ def ts2img_bytes(data: List[float], title: str = "Time Series Plot", highlight_i
     
     Args:
         data (List[float]): Time series data to visualize.
-        title (str, optional): Title for the plot. Defaults to "Time Series Plot".
+        title (str, optional): Title for the plot in English. Defaults to "Time Series Plot".
         highlight_indices (List[int], optional): Indices to highlight on the plot. Defaults to None.
         
     Returns:

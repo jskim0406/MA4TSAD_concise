@@ -13,7 +13,6 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
 
-# 시계열 상태 정의
 class TimeSeriesState(TypedDict):
     """병렬 에이전트 워크플로우를 위한 시계열 분석 상태"""
     # 원본 시계열 데이터
@@ -22,6 +21,8 @@ class TimeSeriesState(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]
     # 시계열 분해 결과 (각 에이전트가 채워넣음)
     decomposition_data: Dict[str, Any]
+    # 원본 시계열 분석 결과 (original_time_series_analyzer가 추가)
+    original_ts_analysis: Annotated[List[Dict[str, Any]], operator.add]
     # 추세 분석 결과 (trend_analyzer가 추가)
     trend_analysis: Annotated[List[Dict[str, Any]], operator.add]
     # 계절성 분석 결과 (seasonality_analyzer가 추가)
@@ -37,6 +38,7 @@ class TimeSeriesState(TypedDict):
 @traceable
 def create_workflow(
     supervisor_agent,
+    original_time_series_analyzer_agent,
     trend_analyzer_agent,
     seasonality_analyzer_agent,
     remainder_analyzer_agent,
@@ -47,6 +49,7 @@ def create_workflow(
     
     Args:
         supervisor_agent: 전체 워크플로우를 조정하는 에이전트
+        original_time_series_analyzer_agent: 원본 시계열 시각적 분석 전문 에이전트
         trend_analyzer_agent: 추세 시각적 분석 전문 에이전트
         seasonality_analyzer_agent: 계절성 시각적 분석 전문 에이전트 
         remainder_analyzer_agent: 잔차 시각적 분석 전문 에이전트
@@ -59,7 +62,15 @@ def create_workflow(
     workflow = StateGraph(TimeSeriesState)
 
     # 그래프에 노드 추가
-    workflow.add_node("supervisor", supervisor_agent)
+    # workflow.add_node("supervisor", supervisor_agent)
+    try:
+        workflow.add_node("supervisor", supervisor_agent)
+        print("Added supervisor node successfully")
+    except Exception as e:
+        print(f"Error adding supervisor node: {e}")
+        import traceback
+        traceback.print_exc()
+    workflow.add_node("original_time_series_analyzer", original_time_series_analyzer_agent)
     workflow.add_node("trend_analyzer", trend_analyzer_agent)
     workflow.add_node("seasonality_analyzer", seasonality_analyzer_agent)
     workflow.add_node("remainder_analyzer", remainder_analyzer_agent)
@@ -69,30 +80,27 @@ def create_workflow(
 
     # 분석 결과를 취합하기 위한 Fan-In: 각 분석 에이전트 -> Supervisor
     # 이 엣지들은 분석 에이전트가 작업을 완료한 후 supervisor를 다시 호출하도록 합니다.
+    workflow.add_edge("original_time_series_analyzer", "supervisor")
     workflow.add_edge("trend_analyzer", "supervisor")
     workflow.add_edge("seasonality_analyzer", "supervisor")
     workflow.add_edge("remainder_analyzer", "supervisor")
 
-    # Supervisor 실행 후 다음 단계를 결정하는 라우팅 함수 정의
     def route_after_supervisor(state: TimeSeriesState) -> Union[List[str], Literal[END]]:
         """Supervisor 노드 실행 후 다음 단계를 결정합니다."""
+        has_original = len(state["original_ts_analysis"]) > 0
         has_trend = len(state["trend_analysis"]) > 0
         has_seasonality = len(state["seasonality_analysis"]) > 0
         has_remainder = len(state["remainder_analysis"]) > 0
-        # supervisor_agent가 모든 분석 결과를 바탕으로 final_analysis를 생성했는지 확인
         has_final = state["final_analysis"] is not None
-
+        
+        print(f"Router: 분석 상태 - 원본: {has_original}, 추세: {has_trend}, 계절성: {has_seasonality}, 잔차: {has_remainder}, 최종분석: {has_final}")
+        
         if has_final:
-            # 최종 분석이 생성되었다면 워크플로우 종료
             print("Router: 최종 분석 완료됨. 워크플로우 종료.")
             return END
         else:
-            # 분석이 완료되지 않았거나 최종 분석이 아직 생성되지 않았다면,
-            # 모든 분석 에이전트를 병렬로 실행합니다.
-            # supervisor 에이전트 자체가 초기 분해 로직을 처리합니다.
             print("Router: 분석 미완료 또는 최종 요약 미생성. 분석 에이전트로 팬아웃.")
-            # 병렬 실행을 위해 노드 이름 리스트 반환
-            return ["trend_analyzer", "seasonality_analyzer", "remainder_analyzer"]
+            return ["original_time_series_analyzer", "trend_analyzer", "seasonality_analyzer", "remainder_analyzer"]
 
     # Supervisor에서 나가는 조건부 엣지 설정
     # supervisor 노드 실행 후 route_after_supervisor 함수 결과에 따라 분기합니다.
@@ -144,6 +152,7 @@ def run_workflow(workflow, time_series_data: Union[List[float], Dict[str, Any]],
             HumanMessage(content=f"Please analyze this time series data. {quantize_message} Sample: {time_series_data[:10]}... (Length: {len(time_series_data)})")
         ],
         "decomposition_data": {}, # 명시적 초기화
+        "original_ts_analysis": [], # 원본 시계열 분석 결과 초기화
         "trend_analysis": [],
         "seasonality_analysis": [],
         "remainder_analysis": [],

@@ -30,9 +30,10 @@ def create_supervisor_agent(llm: BaseChatModel):
     당신의 역할은 분석 워크플로우를 조정하고 각 전문 에이전트의 결과를 종합하여 최종 결론을 도출하는 것입니다.
     
     워크플로우에는 다음과 같은 전문 에이전트들이 있습니다:
-    1. 추세 분석가(Trend Analyzer) - 시계열의 추세(trend) 성분을 시각적으로 분석
-    2. 계절성 분석가(Seasonality Analyzer) - 시계열의 계절성(seasonality) 성분을 시각적으로 분석
-    3. 잔차 분석가(Remainder Analyzer) - 시계열의 잔차(remainder) 성분을 시각적으로 분석
+    1. 원본 시계열 분석가(Original Time Series Analyzer) - 원본 시계열을 직접 시각적으로 분석
+    2. 추세 분석가(Trend Analyzer) - 시계열의 추세(trend) 성분을 시각적으로 분석
+    3. 계절성 분석가(Seasonality Analyzer) - 시계열의 계절성(seasonality) 성분을 시각적으로 분석
+    4. 잔차 분석가(Remainder Analyzer) - 시계열의 잔차(remainder) 성분을 시각적으로 분석
     
     각 전문 에이전트는 시각적 추론을 통해 시계열 데이터의 이상치를 다음 유형으로 분류했습니다:
     - PersistentLevelShiftUp: 데이터가 더 높은 값으로 이동하여 원래 기준선으로 돌아가지 않고 일관되게 유지됨
@@ -51,13 +52,15 @@ def create_supervisor_agent(llm: BaseChatModel):
     
     모든 에이전트로부터 분석 결과를 받았을 때, 최종 종합 분석에 다음 내용을 포함하세요:
     1. 시계열 특성 요약
-    2. 각 구성 요소(추세, 계절성, 잔차)별 중요 발견사항
+    2. 원본 시계열 분석과 구성 요소(추세, 계절성, 잔차)별 중요 발견사항 비교
     3. 식별된 이상치와 그 유형
     4. 각 이상치의 시계열 내 위치(인덱스) 및 중요성
     5. 모니터링이나 추가 분석을 위한 권장사항
     
     에이전트들이 식별한 이상치 유형과 위치를 종합하여 최종 이상치 목록을 명확하게 제시하세요.
     여러 에이전트가 같은 인덱스를 이상치로 식별한 경우, 그 신뢰도가 더 높음을 강조하세요.
+    
+    원본 시계열 분석과 분해된 구성 요소 분석 결과를 비교하고, 어떤 분석 방법이 이상치를 더 명확하게 파악했는지 설명하세요.
     """
 
     supervisor_prompt = ChatPromptTemplate.from_messages([
@@ -67,6 +70,7 @@ def create_supervisor_agent(llm: BaseChatModel):
 
     def format_state_for_supervisor(state: TimeSeriesState) -> str:
         """Supervisor를 위한 현재 상태 정보 포맷팅"""
+        has_original = len(state["original_ts_analysis"]) > 0
         has_trend = len(state["trend_analysis"]) > 0
         has_seasonality = len(state["seasonality_analysis"]) > 0
         has_remainder = len(state["remainder_analysis"]) > 0
@@ -76,17 +80,27 @@ def create_supervisor_agent(llm: BaseChatModel):
             f"현재 분석 상태:",
             f"- 시계열 데이터 길이: {len(state['ts_data'])}",
             f"- 데이터 분해 완료: {'예' if has_decomposition else '아니오'}",
+            f"- 원본 시계열 분석 결과 수신: {'예' if has_original else '아니오'}",
             f"- 추세 분석 결과 수신: {'예' if has_trend else '아니오'}",
             f"- 계절성 분석 결과 수신: {'예' if has_seasonality else '아니오'}",
             f"- 잔차 분석 결과 수신: {'예' if has_remainder else '아니오'}"
         ]
 
         # 이것이 첫 번째 실행이고 아직 분해가 수행되지 않았다면
-        if not has_decomposition and not has_trend and not has_seasonality and not has_remainder:
+        if not has_decomposition and not has_original and not has_trend and not has_seasonality and not has_remainder:
             message.append("\n시계열 데이터를 분해하고 각 에이전트에게 분석을 요청해야 합니다.")
             return "\n".join(message)
 
         # 분석 결과 요약 추가
+        if has_original:
+            message.append("\n최신 원본 시계열 분석 요약:")
+            # 마지막 분석 결과만 요약 표시
+            latest_original = state["original_ts_analysis"][-1]
+            if 'anomalies' in latest_original and latest_original['anomalies']:
+                message.append(f"- 원본 시계열 내 이상치: {len(latest_original['anomalies'])}개")
+                for i, anomaly in enumerate(latest_original['anomalies'][:3]):  # 최대 3개만 표시
+                    message.append(f"  * {anomaly.get('type', 'Unknown')}: 인덱스 {anomaly.get('index', 'N/A')}")
+        
         if has_trend:
             message.append("\n최신 추세 분석 요약:")
             # 마지막 분석 결과만 요약 표시
@@ -119,8 +133,9 @@ def create_supervisor_agent(llm: BaseChatModel):
                     message.append(f"  * {anomaly.get('type', 'Unknown')}: 인덱스 {anomaly.get('index', 'N/A')}")
 
         # 모든 분석이 완료되었는지 확인
-        if has_trend and has_seasonality and has_remainder:
+        if has_original and has_trend and has_seasonality and has_remainder:
             message.append("\n모든 분석 결과가 수신되었습니다. 최종 종합 분석을 제공해주세요.")
+            message.append("원본 시계열 분석 결과와 분해된 성분 분석 결과를 비교하여 각각의 장단점과 어떤 방식이 이상치를 더 잘 탐지했는지도 명시해주세요.")
         else:
             message.append("\n추가 분석 결과를 기다리는 중...")
 
@@ -144,13 +159,14 @@ def create_supervisor_agent(llm: BaseChatModel):
         
         # 이것이 첫 번째 실행이고 분해가 아직 수행되지 않았다면 시계열 분해 수행
         has_decomposition = bool(state.get("decomposition_data"))
+        has_original = len(state["original_ts_analysis"]) > 0
         has_trend = len(state["trend_analysis"]) > 0
         has_seasonality = len(state["seasonality_analysis"]) > 0
         has_remainder = len(state["remainder_analysis"]) > 0
         
         updates: Dict[str, Any] = {}
         
-        if not has_decomposition and not has_trend and not has_seasonality and not has_remainder:
+        if not has_decomposition and not has_original and not has_trend and not has_seasonality and not has_remainder:
             print("Supervisor: 시계열 데이터 분해 수행 중...")
             
             # 분해 도구 호출
@@ -191,8 +207,13 @@ def create_supervisor_agent(llm: BaseChatModel):
             return updates
         
         # 모든 분석이 완료되었다면 최종 분석 생성
-        if has_trend and has_seasonality and has_remainder and state["final_analysis"] is None:
+        # 수정: 모든 분석 결과를 확인하고, original_ts_analysis 결과가 있는지 명시적으로 로깅
+        print(f"Supervisor: 분석 상태 확인 - 원본: {has_original}, 추세: {has_trend}, 계절성: {has_seasonality}, 잔차: {has_remainder}")
+        
+        # 모든 분석이 완료되었다면 최종 분석 생성
+        if has_original and has_trend and has_seasonality and has_remainder and state["final_analysis"] is None:
             print("Supervisor: 모든 분석 결과 수신. 최종 분석 생성 중...")
+            print(f"Supervisor: 원본 분석 결과 길이: {len(state['original_ts_analysis'])}")
             
             # LLM 호출하여 최종 분석 생성
             prompt_result = supervisor_prompt.invoke({"input": input_text})
@@ -207,16 +228,19 @@ def create_supervisor_agent(llm: BaseChatModel):
             all_anomalies = []
             
             # 각 에이전트의 이상치 결과 취합
-            latest_trend = state["trend_analysis"][-1]
-            latest_seasonality = state["seasonality_analysis"][-1]
-            latest_remainder = state["remainder_analysis"][-1]
+            latest_original = state["original_ts_analysis"][-1] if state["original_ts_analysis"] else {}
+            latest_trend = state["trend_analysis"][-1] if state["trend_analysis"] else {}
+            latest_seasonality = state["seasonality_analysis"][-1] if state["seasonality_analysis"] else {}
+            latest_remainder = state["remainder_analysis"][-1] if state["remainder_analysis"] else {}
             
-            # 이상치 목록을 각 구성 요소별로 추가
-            if 'anomalies' in latest_trend:
+            # 이상치 목록을 각 구성 요소별로 추가 (방어적 프로그래밍 적용)
+            if latest_original and 'anomalies' in latest_original:
+                all_anomalies.extend([{**a, 'source': 'original'} for a in latest_original['anomalies']])
+            if latest_trend and 'anomalies' in latest_trend:
                 all_anomalies.extend([{**a, 'source': 'trend'} for a in latest_trend['anomalies']])
-            if 'anomalies' in latest_seasonality:
+            if latest_seasonality and 'anomalies' in latest_seasonality:
                 all_anomalies.extend([{**a, 'source': 'seasonality'} for a in latest_seasonality['anomalies']])
-            if 'anomalies' in latest_remainder:
+            if latest_remainder and 'anomalies' in latest_remainder:
                 all_anomalies.extend([{**a, 'source': 'remainder'} for a in latest_remainder['anomalies']])
             
             # 같은 인덱스에 대해 여러 에이전트가 탐지한 경우 신뢰도 증가
@@ -251,6 +275,7 @@ def create_supervisor_agent(llm: BaseChatModel):
             # 최종 분석 구조화
             final_analysis = {
                 "summary": content,
+                "original_analysis": latest_original,
                 "trend_analysis": latest_trend,
                 "seasonality_analysis": latest_seasonality,
                 "remainder_analysis": latest_remainder,
@@ -272,5 +297,3 @@ def create_supervisor_agent(llm: BaseChatModel):
             print("Supervisor: 진행 상황 업데이트 완료. 추가 분석 결과 대기 중...")
         
         return updates
-    
-    return supervisor_agent
