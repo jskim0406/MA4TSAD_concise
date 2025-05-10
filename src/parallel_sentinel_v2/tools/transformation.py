@@ -5,8 +5,11 @@
 
 import io
 import json
+import pytz
 import base64
 import numpy as np
+from pathlib import Path
+from datetime import datetime
 import matplotlib.pyplot as plt
 from typing import List, Dict, Any, Optional, Union
 
@@ -16,7 +19,7 @@ from langchain_core.tools import tool
 @tool
 def get_time_series_decomposition(data: List[float], period: int = None) -> str:
     """
-    Decomposes time series into trend, seasonal, and residual components and visualizes them.
+    Decomposes time series into trend, seasonal, and residual components and saves visualization locally.
     If period is not provided, attempts to detect it automatically.
     
     Args:
@@ -24,7 +27,7 @@ def get_time_series_decomposition(data: List[float], period: int = None) -> str:
         period (int, optional): Seasonality period. Defaults to None (auto-detect).
         
     Returns:
-        str: JSON string containing decomposition results and visualization
+        str: JSON string containing decomposition results and image path
     """
     try:
         try:
@@ -97,7 +100,7 @@ def get_time_series_decomposition(data: List[float], period: int = None) -> str:
             "residual_strength": var_components["residual"] / var_components["total"]
         }
         
-        # Visualize components
+        # Visualize components - 모든 텍스트를 영어로만 사용
         fig, axes = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
         
         # Original data
@@ -129,17 +132,19 @@ def get_time_series_decomposition(data: List[float], period: int = None) -> str:
         
         plt.tight_layout()
         
-        # Save plot to a bytes buffer
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
+        # 이미지 파일로 저장 (base64 인코딩 대신)
+        timestamp = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y%m%d_%H%M%S")
+        try:
+            img_dir = Path(__file__).resolve().parent.parent.parent.parent / "temp_images"
+        except NameError:
+            img_dir = Path("./temp_images")
+        img_dir.mkdir(parents=True, exist_ok=True)
+        save_path = img_dir / f"decomposition_{timestamp}.png"
         
-        # Encode bytes to base64 string
-        image_base64 = base64.b64encode(buf.read()).decode('utf-8')
-        buf.close()
+        plt.savefig(save_path, dpi=100, bbox_inches='tight')
         plt.close(fig)
         
-        # Return results as JSON
+        # Return results as JSON with image path instead of base64
         result = {
             "period": int(period),
             "strengths": {k: float(v) for k, v in strengths.items()},
@@ -148,7 +153,7 @@ def get_time_series_decomposition(data: List[float], period: int = None) -> str:
                 "seasonal": seasonal.tolist(),
                 "residual": residual.tolist(),
             },
-            "visualization_base64": image_base64,
+            "image_path": str(save_path),
             "status": "success"
         }
         

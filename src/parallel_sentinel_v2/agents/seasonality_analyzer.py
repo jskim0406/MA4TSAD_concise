@@ -4,17 +4,21 @@ Seasonality Analyzer 에이전트 - 개선된 시각적 추론 기반 버전
 시계열 데이터의 계절성 성분을 시각적으로 분석하는 에이전트입니다.
 """
 
-import numpy as np
+import os
 import json
+import base64
+import numpy as np
+import re
 from typing import Dict, Any, List, Callable
 from scipy import stats, signal
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
 from langgraph.prebuilt import ToolNode
 
 from parallel_sentinel_v2.graph.workflow import TimeSeriesState
+from parallel_sentinel_v2.utils.llm_utils import process_visualization_result
 
 
 def create_seasonality_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = None):
@@ -143,6 +147,7 @@ def create_seasonality_analyzer_agent(llm: BaseChatModel, tools: List[Callable] 
         messages.append(ai_message)
         
         content = ""
+        visualization_content = None
         
         # 도구 호출 처리
         if tools and hasattr(ai_message, "tool_calls") and ai_message.tool_calls:
@@ -151,12 +156,31 @@ def create_seasonality_analyzer_agent(llm: BaseChatModel, tools: List[Callable] 
             tool_messages = [msg for msg in tool_response["messages"] if isinstance(msg, ToolMessage)]
             messages.extend(tool_messages)
             
+            # 시각화 도구 응답 검사 및 이미지 로드
+            for msg in tool_messages:
+                if "ts2img" in msg.content:
+                    try:
+                        # 시각화 도구 응답에서 이미지 경로 추출 및 처리
+                        multimodal_content = process_visualization_result(msg.content)
+                        if multimodal_content:
+                            visualization_content = multimodal_content
+                            print("계절성 시각화 이미지 로드 성공 - 멀티모달 입력으로 LLM에 전달 예정")
+                    except Exception as viz_err:
+                        print(f"시각화 결과 처리 중 오류: {viz_err}")
+            
             # 도구 결과를 포함한 후속 LLM 호출
-            follow_up_prompt = seasonality_analyzer_prompt.invoke({
-                "messages": messages, 
-                "input": "도구 결과를 바탕으로 계절성 데이터의 시각적 분석을 완료해주세요. 계절성의 특성과 이상치 유형을 상세히 설명하고, 이상치가 위치한 인덱스를 정확히 명시해주세요."
-            })
-            ai_follow_up = llm_with_tools.invoke(follow_up_prompt)
+            if visualization_content:
+                # 멀티모달 입력(이미지 + 텍스트)으로 LLM 호출
+                follow_up_message = HumanMessage(content=visualization_content)
+                ai_follow_up = llm.invoke([follow_up_message])
+            else:
+                # 일반 텍스트 입력으로 LLM 호출
+                follow_up_prompt = seasonality_analyzer_prompt.invoke({
+                    "messages": messages, 
+                    "input": "도구 결과를 바탕으로 계절성 데이터의 분석을 완료해주세요. 계절성의 특성과 이상치 유형을 상세히 설명하고, 이상치가 위치한 인덱스를 정확히 명시해주세요."
+                })
+                ai_follow_up = llm_with_tools.invoke(follow_up_prompt)
+            
             messages.append(ai_follow_up)
             content = ai_follow_up.content
         else:
@@ -171,7 +195,6 @@ def create_seasonality_analyzer_agent(llm: BaseChatModel, tools: List[Callable] 
         for anomaly_type in anomaly_types:
             if anomaly_type in content:
                 # 해당 이상치 유형이 언급된 경우, 인덱스 정보 추출 시도
-                import re
                 # 인덱스 패턴 검색: 숫자, 인덱스, index 등의 키워드 주변 숫자 찾기
                 index_patterns = [
                     rf"{anomaly_type}.*?인덱스\s*?(\d+)",
@@ -200,7 +223,6 @@ def create_seasonality_analyzer_agent(llm: BaseChatModel, tools: List[Callable] 
         except (ValueError, TypeError):
             period = 0
             # LLM 응답에서 주기 추출 시도
-            import re
             period_patterns = [
                 r"주기[는은이가]?\s*(\d+)",
                 r"period[는은이가]?\s*(\d+)",
@@ -225,7 +247,7 @@ def create_seasonality_analyzer_agent(llm: BaseChatModel, tools: List[Callable] 
             "anomalies": anomalies,
             "strength": float(state.get("decomposition_data", {}).get("stats", {}).get("seasonality_strength", 0)),
             "llm_analysis": content,
-            "visual_analysis": True  # 시각적 분석 수행 여부 표시
+            "visual_analysis": True if visualization_content else False  # 시각적 분석 수행 여부 표시
         }
         
         return {

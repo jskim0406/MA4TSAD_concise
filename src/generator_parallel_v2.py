@@ -13,19 +13,21 @@ import argparse
 import numpy as np
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Literal
 
 # 환경 변수 로드
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
 # LangSmith 설정 함수
-def setup_langsmith():
+def setup_langsmith(quantize_info=None):
     """LangSmith 설정 (설정된 경우)"""
-    os.environ["LANGSMITH_TRACING"] = os.getenv("LANGSMITH_TRACING", "false")
+    os.environ["LANGSMITH_TRACING"] = os.getenv("LANGSMITH_TRACING", "true")  # 기본값 true로 변경
     os.environ["LANGSMITH_API_KEY"] = os.getenv("LANGSMITH_API_KEY", "")
-    os.environ["LANGSMITH_PROJECT"] = os.getenv("LANGSMITH_PROJECT", "parallel-sentinel-v2")
-setup_langsmith()
+    if quantize_info and quantize_info["applied"]:
+        os.environ["LANGSMITH_PROJECT"] = os.getenv(f"LANGSMITH_PROJECT", f"test-parallel-sentinel-v2-quantized_r{quantize_info['range']}_{quantize_info['method']}")
+    else:
+        os.environ["LANGSMITH_PROJECT"] = os.getenv(f"LANGSMITH_PROJECT", f"test-parallel-sentinel-v2")
 
 # LangChain 및 Parallel Sentinel V2 모듈 임포트
 try:
@@ -48,6 +50,7 @@ try:
         f"{len(transformation_tools)} 변환)")
     from parallel_sentinel_v2.graph import create_workflow, run_workflow
     from parallel_sentinel_v2.utils.llm_utils import init_llm
+    from parallel_sentinel_v2.utils.ts_utils import quantize_time_series, get_quantization_info
 
 except ImportError as e:
     print(f"오류: 필요한 라이브러리를 임포트할 수 없습니다: {e}")
@@ -108,6 +111,13 @@ def main():
     parser.add_argument("--debug", action="store_true", help="LangChain 디버그 모드 활성화")
     parser.add_argument("--output", type=str, default="parallel_sentinel_v2/output_test", help="결과 출력 디렉토리")
     parser.add_argument("--llm_provider", type=str, default="google", choices=["google", "anthropic", "openai"], help="멀티모달 LLM 제공자")
+    
+    # 양자화 관련 인자 추가
+    parser.add_argument("--quantize_range", type=int, default=1, 
+                        help="시계열 데이터 양자화 범위 (n개 데이터 포인트를 1개로 압축, 기본값: 1 - 압축 없음)")
+    parser.add_argument("--quantize_method", type=str, default="mean", choices=["mean", "median", "max", "min"],
+                       help="양자화 방법 (기본값: mean)")
+    
     args = parser.parse_args()
 
     # 디버그 모드 설정
@@ -122,17 +132,38 @@ def main():
     if not time_series_data:
         print("오류: 분석할 시계열 데이터가 없습니다. 스크립트를 종료합니다.")
         sys.exit(1)
+    
+    # 양자화 적용
+    original_length = len(time_series_data)
+    quantized_data = quantize_time_series(
+        time_series_data, 
+        quantize_range=args.quantize_range, 
+        method=args.quantize_method
+    )
+    
+    # 양자화 정보 얻기
+    quantize_info = get_quantization_info(
+        args.quantize_range, 
+        args.quantize_method, 
+        original_length
+    )
+    
+    # 양자화 적용된 경우 출력
+    if quantize_info["applied"]:
+        print(f"\n시계열 데이터 양자화 적용: {quantize_info['message']}")
+        time_series_data = quantized_data
+    
+    # LangSmith 설정 업데이트 (양자화 정보 포함)
+    setup_langsmith(quantize_info)
 
     # 멀티모달 언어 모델 초기화
     try:
         llm = init_llm(args)
     except Exception as e:
         print(f"오류: LLM 모델 초기화 실패: {e}")
-        print("모델 제공자 및 설정을 확인하세요.")
+        print("모델 제공자 및 설정을 확인하세요. 이미지 분석을 위해 Gemini 1.5 또는 이미지 지원 모델이 필요합니다.")
         sys.exit(1)
 
-    print(f"{len(tools)}개의 도구 정의 완료")
-    
     # 에이전트 생성
     try:
         supervisor = create_supervisor_agent(llm)
@@ -171,8 +202,15 @@ def main():
     print(f"\n시계열 데이터 시각적 추론 분석 실행 중 (데이터 소스: {data_source}, 길이: {len(time_series_data)})")
     start_time = datetime.now()
 
+    # 양자화 메타데이터 추가
+    config = {
+        "metadata": {
+            "quantization": quantize_info
+        }
+    }
+
     try:
-        final_state = run_workflow(workflow, time_series_data)
+        final_state = run_workflow(workflow, time_series_data, config=config)
     except Exception as e:
         print(f"\n오류: 워크플로우 실행 중 예외 발생: {e}")
         import traceback
@@ -207,11 +245,11 @@ def main():
                 print(f"\n{anomaly_type} ({len(anomalies)}개):")
                 for i, anomaly in enumerate(anomalies[:5]):  # 각 유형별 최대 5개만 표시
                     sources = anomaly.get('sources', [anomaly.get('source', 'unknown')])
-                    print(f"  이상치 {i+1}: 인덱스={anomaly.get('index', 'N/A')}, "
-                          f"신뢰도={anomaly.get('confidence', 0):.2f}, "
-                          f"감지 소스={', '.join(sources)}")
+                    print(f"  Anomaly {i+1}: Index={anomaly.get('index', 'N/A')}, "
+                          f"Confidence={anomaly.get('confidence', 0):.2f}, "
+                          f"Sources={', '.join(sources)}")
                 if len(anomalies) > 5:
-                    print(f"  ... 외 {len(anomalies) - 5}개")
+                    print(f"  ... and {len(anomalies) - 5} more")
 
         # 상세 결과 저장
         analysis_output = {
@@ -220,6 +258,7 @@ def main():
             "analysis_duration_seconds": duration,
             "llm_provider": args.llm_provider,
             "timestamp": datetime.now(pytz.timezone("Asia/Seoul")).isoformat(),
+            "quantization_info": quantize_info,
             "final_analysis_summary": analysis_summary,
             # 각 에이전트의 마지막 분석 결과 포함
             "trend_analysis_details": final_state.get("trend_analysis", [{}])[-1],

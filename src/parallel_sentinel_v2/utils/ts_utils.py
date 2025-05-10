@@ -10,7 +10,7 @@ import base64
 import numpy as np
 import pandas as pd
 from PIL import Image
-from typing import List, Tuple, Optional, Dict, Any, Union
+from typing import List, Tuple, Optional, Dict, Any, Union, Literal
 from matplotlib import pyplot as plt
 
 # fastdtw는 필요시 설치해야 할 수 있습니다: pip install fastdtw
@@ -562,4 +562,109 @@ def detect_anomalies_ensemble(
         "ma_anomalies": ma_results["anomaly_indices"],
         "detection_counts": detection_counts,
         "num_anomalies": len(all_indices)
+    }
+
+def quantize_time_series(
+    data: List[float], 
+    quantize_range: int = 1,
+    method: Literal['mean', 'median', 'max', 'min'] = 'mean'
+) -> List[float]:
+    """
+    시계열 데이터를 지정된 범위로 양자화(요약)합니다.
+    
+    Args:
+        data (List[float]): 원본 시계열 데이터
+        quantize_range (int): 양자화할 데이터 포인트 수 (몇 개 데이터를 하나로 압축할지)
+        method (str): 양자화 방법 ('mean', 'median', 'max', 'min')
+        
+    Returns:
+        List[float]: 양자화된 시계열 데이터
+    """
+    if quantize_range <= 1:
+        return data  # 양자화가 필요 없으면 원본 반환
+    
+    data_np = np.array(data)
+    n = len(data_np)
+    
+    # 데이터 양이 양자화 범위보다 작으면 그대로 반환
+    if n <= quantize_range:
+        return data
+    
+    # 완전한 그룹 수 계산
+    num_groups = n // quantize_range
+    
+    # 나머지 데이터 처리를 위한 패딩
+    remainder = n % quantize_range
+    if remainder > 0:
+        # 마지막 그룹에 포함될 데이터 수 조정
+        padded_length = num_groups * quantize_range + remainder
+        data_reshaped = data_np[:padded_length].reshape(-1, quantize_range)
+    else:
+        data_reshaped = data_np.reshape(num_groups, quantize_range)
+    
+    # 선택된 방법으로 양자화
+    if method == 'mean':
+        quantized = np.mean(data_reshaped, axis=1)
+    elif method == 'median':
+        quantized = np.median(data_reshaped, axis=1)
+    elif method == 'max':
+        quantized = np.max(data_reshaped, axis=1)
+    elif method == 'min':
+        quantized = np.min(data_reshaped, axis=1)
+    else:
+        raise ValueError(f"Unsupported quantization method: {method}")
+    
+    # 나머지 데이터가 있으면 처리
+    if remainder > 0:
+        # 마지막 그룹 처리
+        last_group = data_np[num_groups*quantize_range:]
+        if method == 'mean':
+            last_value = np.mean(last_group)
+        elif method == 'median':
+            last_value = np.median(last_group)
+        elif method == 'max':
+            last_value = np.max(last_group)
+        elif method == 'min':
+            last_value = np.min(last_group)
+        
+        # 마지막 값 추가
+        quantized = np.append(quantized, last_value)
+    
+    return quantized.tolist()
+
+
+def get_quantization_info(quantize_range: int, method: str, original_length: int) -> Dict[str, Any]:
+    """
+    양자화 정보를 사용자 친화적인 메시지로 반환합니다.
+    
+    Args:
+        quantize_range (int): 양자화 범위
+        method (str): 양자화 방법
+        original_length (int): 원본 데이터 길이
+        
+    Returns:
+        Dict[str, Any]: 양자화 정보
+    """
+    if quantize_range <= 1:
+        return {
+            "applied": False,
+            "message": "No quantization applied (quantize_range <= 1)."
+        }
+    
+    new_length = original_length // quantize_range
+    if original_length % quantize_range > 0:
+        new_length += 1
+        
+    compression_ratio = original_length / new_length
+    
+    return {
+        "applied": True,
+        "method": method,
+        "range": quantize_range,
+        "original_length": original_length,
+        "quantized_length": new_length,
+        "compression_ratio": compression_ratio,
+        "message": f"Data quantized using {method} method with range {quantize_range}. "
+                  f"Compressed from {original_length} to {new_length} points "
+                  f"(compression ratio: {compression_ratio:.2f}x)."
     }

@@ -22,7 +22,7 @@ from langchain_core.tools import tool
 @tool
 def ts2img_bytes(data: List[float], title: str = "Time Series Plot", highlight_indices: List[int] = None) -> str:
     """
-    Generates a line plot from time series data and returns it as a base64 encoded PNG string.
+    Generates a line plot from time series data and saves it locally.
     
     Args:
         data (List[float]): Time series data to visualize.
@@ -30,7 +30,7 @@ def ts2img_bytes(data: List[float], title: str = "Time Series Plot", highlight_i
         highlight_indices (List[int], optional): Indices to highlight on the plot. Defaults to None.
         
     Returns:
-        str: Base64 encoded string representing the PNG image.
+        str: JSON string containing status, message, and image path information.
     """
     fig = None
     try:
@@ -58,20 +58,34 @@ def ts2img_bytes(data: List[float], title: str = "Time Series Plot", highlight_i
         if highlight_indices:
             ax.legend()
 
-        # Save plot to a bytes buffer
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
+        # Generate a timestamp for unique filename
+        timestamp = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y%m%d_%H%M%S")
+        
+        # Set image save path
+        try:
+            # Attempt relative path assuming standard project structure
+            img_dir = Path(__file__).resolve().parent.parent.parent.parent / "temp_images"
+        except NameError:
+            # Fallback for environments where __file__ is not defined
+            img_dir = Path("./temp_images")
 
-        # Encode bytes to base64 string
-        image_base64 = base64.b64encode(buf.read()).decode('utf-8')
-        buf.close()
-        return image_base64
+        img_dir.mkdir(parents=True, exist_ok=True)
+        save_path = img_dir / f"timeseries_{timestamp}.png"
+        
+        # Save the image to disk
+        plt.savefig(save_path, dpi=100, bbox_inches='tight')
+
+        print(f"Image saved at: {save_path}")
+        return json.dumps({
+            "status": "success",
+            "message": f"Image generated: {save_path.name}",
+            "image_path": str(save_path)
+        })
 
     except Exception as e:
         error_message = f"Error generating image: {e}"
         print(error_message)
-        return error_message
+        return json.dumps({"status": "error", "message": error_message})
     finally:
         if fig is not None:
             plt.close(fig)  # Close the figure to free memory
@@ -80,7 +94,7 @@ def ts2img_bytes(data: List[float], title: str = "Time Series Plot", highlight_i
 @tool
 def ts2img_with_anomalies(data: List[float], anomaly_indices: List[int], title: str = "Time Series with Anomalies") -> str:
     """
-    Generates a visualization of time series data highlighting anomalies and returns as base64 encoded PNG.
+    Generates a visualization of time series data highlighting anomalies and saves it locally.
     
     Args:
         data (List[float]): Time series data to visualize.
@@ -88,7 +102,7 @@ def ts2img_with_anomalies(data: List[float], anomaly_indices: List[int], title: 
         title (str, optional): Title for the plot. Defaults to "Time Series with Anomalies".
         
     Returns:
-        str: Base64 encoded string representing the PNG image.
+        str: JSON string containing status, message, and image path information.
     """
     fig = None
     try:
@@ -117,20 +131,32 @@ def ts2img_with_anomalies(data: List[float], anomaly_indices: List[int], title: 
         ax.grid(True, linestyle='--', alpha=0.6)
         ax.legend(loc='best')
 
-        # Save plot to a bytes buffer
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
+        # Generate a timestamp for unique filename
+        timestamp = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y%m%d_%H%M%S")
+        
+        # Set image save path
+        try:
+            img_dir = Path(__file__).resolve().parent.parent.parent.parent / "temp_images"
+        except NameError:
+            img_dir = Path("./temp_images")
 
-        # Encode bytes to base64 string
-        image_base64 = base64.b64encode(buf.read()).decode('utf-8')
-        buf.close()
-        return image_base64
+        img_dir.mkdir(parents=True, exist_ok=True)
+        save_path = img_dir / f"anomalies_{timestamp}.png"
+        
+        # Save the image to disk
+        plt.savefig(save_path, dpi=100, bbox_inches='tight')
+
+        print(f"Image saved at: {save_path}")
+        return json.dumps({
+            "status": "success",
+            "message": f"Image generated: {save_path.name}",
+            "image_path": str(save_path)
+        })
 
     except Exception as e:
         error_message = f"Error generating anomaly visualization: {e}"
         print(error_message)
-        return error_message
+        return json.dumps({"status": "error", "message": error_message})
     finally:
         if fig is not None:
             plt.close(fig)
@@ -141,7 +167,7 @@ def ts2img_multi_view(data: List[float], window_size: int = 50, num_windows: int
                      title: str = "Multi-Window Time Series View", highlight_indices: List[int] = None) -> str:
     """
     Generates multi-window time series views for better visualization of local patterns.
-    Returns as base64 encoded PNG.
+    Saves the visualization locally.
     
     Args:
         data (List[float]): Time series data to visualize.
@@ -151,7 +177,7 @@ def ts2img_multi_view(data: List[float], window_size: int = 50, num_windows: int
         highlight_indices (List[int], optional): List of indices to highlight. Defaults to None.
         
     Returns:
-        str: Base64 encoded string representing the PNG image.
+        str: JSON string containing status, message, and image path information.
     """
     fig = None
     try:
@@ -205,20 +231,32 @@ def ts2img_multi_view(data: List[float], window_size: int = 50, num_windows: int
 
         plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust layout for suptitle
 
-        # Save plot to a bytes buffer
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
+        # Generate a timestamp for unique filename
+        timestamp = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y%m%d_%H%M%S")
+        
+        # Set image save path
+        try:
+            img_dir = Path(__file__).resolve().parent.parent.parent.parent / "temp_images"
+        except NameError:
+            img_dir = Path("./temp_images")
 
-        # Encode bytes to base64 string
-        image_base64 = base64.b64encode(buf.read()).decode('utf-8')
-        buf.close()
-        return image_base64
+        img_dir.mkdir(parents=True, exist_ok=True)
+        save_path = img_dir / f"multiview_{timestamp}.png"
+        
+        # Save the image to disk
+        plt.savefig(save_path, dpi=100, bbox_inches='tight')
+
+        print(f"Image saved at: {save_path}")
+        return json.dumps({
+            "status": "success",
+            "message": f"Image generated: {save_path.name}",
+            "image_path": str(save_path)
+        })
 
     except Exception as e:
         error_message = f"Error generating multi-window visualization: {e}"
         print(error_message)
-        return error_message
+        return json.dumps({"status": "error", "message": error_message})
     finally:
         if fig is not None:
             plt.close(fig)

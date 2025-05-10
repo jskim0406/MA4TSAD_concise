@@ -131,18 +131,29 @@ def run_workflow(workflow, time_series_data: Union[List[float], Dict[str, Any]],
     Returns:
         Dict[str, Any]: 워크플로우의 최종 상태
     """
+    config = kwargs.pop("config", {})
+    
+    # 양자화 정보가 있으면 메타데이터에 추가
+    if "metadata" in config and "quantization" in config["metadata"]:
+        quantize_info = config["metadata"]["quantization"]
+        quantize_message = ""
+        if quantize_info["applied"]:
+            quantize_message = f"Time series data has been quantized using {quantize_info['method']} method with range {quantize_info['range']}. "
+            quantize_message += f"Original length: {quantize_info['original_length']}, Quantized length: {quantize_info['quantized_length']}."
+    else:
+        quantize_message = "No quantization applied."
 
     initial_state = {
         "ts_data": time_series_data,
         "messages": [
-            HumanMessage(content=f"이 시계열 데이터를 시각적 추론 기반으로 분석해주세요: {time_series_data[:10]}... (길이: {len(time_series_data)})")
+            HumanMessage(content=f"Please analyze this time series data. {quantize_message} Sample: {time_series_data[:10]}... (Length: {len(time_series_data)})")
         ],
         "decomposition_data": {}, # 명시적 초기화
         "trend_analysis": [],
         "seasonality_analysis": [],
         "remainder_analysis": [],
         "final_analysis": None,
-        "config": kwargs.pop("config", {}),
+        "config": config,
     }
 
     print(f"시각적 추론 기반 병렬 워크플로우 실행 시작 - 시계열 데이터 길이: {len(initial_state['ts_data'])}")

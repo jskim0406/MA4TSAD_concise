@@ -51,3 +51,36 @@ def init_llm(args):
     
     print(f'{args.llm_provider}의 언어모델 {llm}이 초기화 되었습니다.')
     return llm
+
+def process_visualization_result(tool_response_str):
+    """
+    시각화 도구 응답에서 이미지 경로를 추출하고 이미지 파일을 로드하여 
+    LLM에 전달할 수 있는 멀티모달 입력 형식으로 변환
+    
+    Args:
+        tool_response_str: 시각화 도구의 JSON 응답 문자열
+        
+    Returns:
+        list: LLM에 전달할 멀티모달 입력 형식의 콘텐츠 리스트 또는 None
+    """
+    try:
+        response = json.loads(tool_response_str)
+        if response.get("status") == "success" and "image_path" in response:
+            image_path = response["image_path"]
+            if os.path.exists(image_path):
+                # 이미지 파일 읽기
+                with open(image_path, "rb") as f:
+                    image_data = base64.b64encode(f.read()).decode("utf-8")
+                
+                # 이미지 데이터를 LLM이 인식할 수 있는 형태로 준비
+                return [
+                    {"type": "text", "text": "Please analyze this time series visualization:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{image_data}"},
+                    }
+                ]
+        return None
+    except Exception as e:
+        print(f"Error processing visualization result: {e}")
+        return None
