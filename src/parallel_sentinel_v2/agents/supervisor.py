@@ -138,7 +138,6 @@ def create_supervisor_agent(llm: BaseChatModel):
             message.append("원본 시계열 분석 결과와 분해된 성분 분석 결과를 비교하여 각각의 장단점과 어떤 방식이 이상치를 더 잘 탐지했는지도 명시해주세요.")
         else:
             message.append("\n추가 분석 결과를 기다리는 중...")
-
         return "\n".join(message)
 
     def supervisor_agent(state: TimeSeriesState) -> Dict[str, Any]:
@@ -297,3 +296,4 @@ def create_supervisor_agent(llm: BaseChatModel):
             print("Supervisor: 진행 상황 업데이트 완료. 추가 분석 결과 대기 중...")
         
         return updates
+    return supervisor_agent

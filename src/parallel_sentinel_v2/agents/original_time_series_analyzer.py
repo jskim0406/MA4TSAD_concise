@@ -171,7 +171,9 @@ def create_original_time_series_analyzer_agent(llm: BaseChatModel, tools: List[C
                 index_patterns = [
                     rf"{anomaly_type}.*?인덱스\s*?(\d+)",
                     rf"{anomaly_type}.*?index\s*?(\d+)",
-                    rf"{anomaly_type}.*?위치\s*?(\d+)"
+                    rf"{anomaly_type}.*?위치\s*?(\d+)",
+                    rf"인덱스\s*?(\d+).*?{anomaly_type}",  # 순서가 바뀌는 경우 대응
+                    rf"index\s*?(\d+).*?{anomaly_type}"    # 영어로 쓰이는 경우 대응
                 ]
                 
                 for pattern in index_patterns:

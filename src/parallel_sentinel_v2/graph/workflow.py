@@ -62,14 +62,7 @@ def create_workflow(
     workflow = StateGraph(TimeSeriesState)
 
     # 그래프에 노드 추가
-    # workflow.add_node("supervisor", supervisor_agent)
-    try:
-        workflow.add_node("supervisor", supervisor_agent)
-        print("Added supervisor node successfully")
-    except Exception as e:
-        print(f"Error adding supervisor node: {e}")
-        import traceback
-        traceback.print_exc()
+    workflow.add_node("supervisor", supervisor_agent)
     workflow.add_node("original_time_series_analyzer", original_time_series_analyzer_agent)
     workflow.add_node("trend_analyzer", trend_analyzer_agent)
     workflow.add_node("seasonality_analyzer", seasonality_analyzer_agent)
