@@ -12,7 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 
 from parallel_sentinel_v2.graph.workflow import TimeSeriesState
-from parallel_sentinel_v2.tools.decomposition import get_time_series_decomposition
+from parallel_sentinel_v2.tools.transformation import get_time_series_decomposition
 
 
 def create_supervisor_agent(llm: BaseChatModel):
@@ -154,7 +154,7 @@ def create_supervisor_agent(llm: BaseChatModel):
             print("Supervisor: 시계열 데이터 분해 수행 중...")
             
             # 분해 도구 호출
-            decomposition_result_str = get_time_series_decomposition(state["ts_data"])
+            decomposition_result_str = get_time_series_decomposition({"data": state["ts_data"]})
             decomposition_result = json.loads(decomposition_result_str)
             
             # 상태 업데이트에 분해 데이터 추가

@@ -106,7 +106,7 @@ def main():
     parser = argparse.ArgumentParser(description="Parallel Sentinel V2 - 시각적 추론 기반 시계열 이상 탐지 시스템")
     parser.add_argument("--data", type=str, help="CSV 데이터 파일 경로")
     parser.add_argument("--debug", action="store_true", help="LangChain 디버그 모드 활성화")
-    parser.add_argument("--output", type=str, default="output", help="결과 출력 디렉토리")
+    parser.add_argument("--output", type=str, default="parallel_sentinel_v2/output_test", help="결과 출력 디렉토리")
     parser.add_argument("--llm_provider", type=str, default="google", choices=["google", "anthropic", "openai"], help="멀티모달 LLM 제공자")
     args = parser.parse_args()
 
@@ -131,15 +131,8 @@ def main():
         print("모델 제공자 및 설정을 확인하세요.")
         sys.exit(1)
 
-    # 도구 정의 - TOOL_INSTRUCTIONS에 명시된 도구들 중 핵심적인 것들 선택
-    tools = [
-        ts2img_bytes,  # 시각화 도구 (필수)
-        get_fourier_transform,  # 주파수 분석
-        get_time_series_decomposition,  # 시계열 분해
-        get_time_series_statistics,  # 통계 분석
-    ]
     print(f"{len(tools)}개의 도구 정의 완료")
-
+    
     # 에이전트 생성
     try:
         supervisor = create_supervisor_agent(llm)

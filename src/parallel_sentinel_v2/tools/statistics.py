@@ -227,17 +227,27 @@ def get_time_series_diff(data: List[float], order: int = 1) -> str:
         return json.dumps({"status": "error", "message": error_message})
 
 
-@tool
+auto_correlation_args_schema = {
+    "type": "object",
+    "properties": {
+        "data": {
+            "type": "array",
+            "items": {"type": "number"},
+            "description": "Time series data"
+        },
+        "max_lag": {
+            "type": "number",
+            "description": "Maximum lag to calculate for analysis",
+            "nullable": True
+        }
+    },
+    "required": ["data"]
+}
+
+@tool(args_schema=auto_correlation_args_schema)
 def auto_correlation(data: List[float], max_lag: Optional[int] = None) -> str:
     """
     Calculates the auto-correlation of time series data.
-    
-    Args:
-        data (List[float]): Time series data
-        max_lag (Optional[int], optional): Maximum lag to calculate (default: None, uses len(data)-1).
-        
-    Returns:
-        str: JSON string containing auto-correlation values for different lags
     """
     try:
         if not data:
