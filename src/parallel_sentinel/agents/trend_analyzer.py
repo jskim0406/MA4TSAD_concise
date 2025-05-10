@@ -69,6 +69,22 @@ def create_trend_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = None
         if not trend_data:
             return "추세 데이터를 찾을 수 없습니다."
         
+        # # 분석 요청 메시지 생성
+        # message = [
+        #     f"시계열 데이터(길이: {len(ts_data)})의 추세 성분을 분석해주세요.",
+        #     "",
+        #     f"분해 방법: {decomposition_data.get('method', 'unknown')}",
+        #     f"추세 강도: {decomposition_data.get('stats', {}).get('trend_strength', 'N/A')}",
+        #     "",
+        #     "추세 데이터 샘플 (처음 10개 값):",
+        #     f"{trend_data[:10]}",
+        #     "",
+        #     "추세 데이터 샘플 (마지막 10개 값):",
+        #     f"{trend_data[-10:] if len(trend_data) > 10 else trend_data}",
+        #     "",
+        #     "추세 성분에 대한 철저한 분석을 제공해주세요. 추세 방향, 변화율, 변곡점, 그리고 추세 내 이상치를 식별해주세요."
+        # ]
+
         # 분석 요청 메시지 생성
         message = [
             f"시계열 데이터(길이: {len(ts_data)})의 추세 성분을 분석해주세요.",
@@ -76,11 +92,8 @@ def create_trend_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = None
             f"분해 방법: {decomposition_data.get('method', 'unknown')}",
             f"추세 강도: {decomposition_data.get('stats', {}).get('trend_strength', 'N/A')}",
             "",
-            "추세 데이터 샘플 (처음 10개 값):",
-            f"{trend_data[:10]}",
-            "",
-            "추세 데이터 샘플 (마지막 10개 값):",
-            f"{trend_data[-10:] if len(trend_data) > 10 else trend_data}",
+            "추세 데이터 샘플:",
+            f"{trend_data}",
             "",
             "추세 성분에 대한 철저한 분석을 제공해주세요. 추세 방향, 변화율, 변곡점, 그리고 추세 내 이상치를 식별해주세요."
         ]

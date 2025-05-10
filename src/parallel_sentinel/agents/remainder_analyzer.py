@@ -73,6 +73,22 @@ def create_remainder_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = 
         if not remainder_data:
             return "잔차 데이터를 찾을 수 없습니다."
         
+        # # 분석 요청 메시지 생성
+        # message = [
+        #     f"시계열 데이터(길이: {len(ts_data)})의 잔차 성분을 분석해주세요.",
+        #     "",
+        #     f"분해 방법: {decomposition_data.get('method', 'unknown')}",
+        #     f"잔차 강도: {decomposition_data.get('stats', {}).get('remainder_strength', 'N/A')}",
+        #     "",
+        #     "잔차 데이터 샘플 (처음 20개 값):",
+        #     f"{remainder_data[:20]}",
+        #     "",
+        #     "잔차 데이터 샘플 (마지막 20개 값):",
+        #     f"{remainder_data[-20:] if len(remainder_data) > 20 else remainder_data}",
+        #     "",
+        #     "잔차 성분에 대한 철저한 분석을 제공해주세요. 잔차의 분포, 패턴, 이상치를 식별하고, 시계열에서 비정상적인 부분을 찾아주세요."
+        # ]
+
         # 분석 요청 메시지 생성
         message = [
             f"시계열 데이터(길이: {len(ts_data)})의 잔차 성분을 분석해주세요.",
@@ -80,15 +96,11 @@ def create_remainder_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = 
             f"분해 방법: {decomposition_data.get('method', 'unknown')}",
             f"잔차 강도: {decomposition_data.get('stats', {}).get('remainder_strength', 'N/A')}",
             "",
-            "잔차 데이터 샘플 (처음 20개 값):",
-            f"{remainder_data[:20]}",
-            "",
-            "잔차 데이터 샘플 (마지막 20개 값):",
-            f"{remainder_data[-20:] if len(remainder_data) > 20 else remainder_data}",
+            "잔차 데이터 샘플:",
+            f"{remainder_data}",
             "",
             "잔차 성분에 대한 철저한 분석을 제공해주세요. 잔차의 분포, 패턴, 이상치를 식별하고, 시계열에서 비정상적인 부분을 찾아주세요."
         ]
-        
         return "\n".join(message)
 
     def remainder_analyzer_agent(state: TimeSeriesState) -> Dict[str, Any]:

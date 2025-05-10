@@ -1,20 +1,27 @@
 import json
+import pytz
+import base64
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from io import BytesIO
-import base64
-from typing import List, Dict, Any, Optional, Tuple, Union
-from datetime import datetime
+from scipy import signal
+import matplotlib.pyplot as plt
+
 from pathlib import Path
+from datetime import datetime
+from typing import List, Dict, Any, Optional, Tuple, Union
 
 from statsmodels.tsa.seasonal import seasonal_decompose, STL 
-from scipy import signal
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field # Pydantic import 추가
+from pydantic import BaseModel, Field
 
-# --- 수동 스키마 정의 ---
+
+##### Todo #####
+# 검토 필요. made by claude, gemini
+##### Todo #####
+
+
 decomposition_args_schema = {
     "type": "object",
     "properties": {
@@ -29,10 +36,8 @@ decomposition_args_schema = {
             "default": "stl"
         },
         "period": {
-            # Google API가 integer 타입을 어떻게 표현하는지에 따라 "integer" 또는 "number" 사용
-            # nullable: true 를 추가하여 Optional임을 명시
             "type": "integer",
-            "nullable": True, # Optional[int]를 표현
+            "nullable": True,
             "description": "계절성 주기. None이면 자동 탐지 시도",
             "default": None
         },
@@ -45,8 +50,8 @@ decomposition_args_schema = {
     "required": ["data"]
 }
 
-# --- @tool 데코레이터에 수동 스키마 적용 ---
-@tool(args_schema=decomposition_args_schema) # Pydantic 모델 대신 직접 정의한 dict 전달
+# 검토 필요. made by claude, gemini
+@tool(args_schema=decomposition_args_schema)
 def decompose_time_series(
     data: List[float],
     method: str = "stl",
@@ -55,7 +60,6 @@ def decompose_time_series(
 ) -> str:
     """
     시계열 데이터를 추세(trend), 계절성(seasonality), 잔차(remainder) 성분으로 분해합니다.
-    (함수 내부 로직은 이전과 동일)
     """
     try:
         data_np = np.array(data)
@@ -70,10 +74,21 @@ def decompose_time_series(
 
         fig_path = _visualize_decomposition(data_np, result, method, period)
 
+        # 후속 Agent에게 전달할 decompoosition 결과 data points 수 제한(prompt 길이 조절로 성능, 비용 고려)
+        num_data_limit = None
+        if num_data_limit:
+            trend_list = result["trend"][:num_data_limit].tolist() + result["trend"][-num_data_limit:].tolist() if len(result["trend"]) > num_data_limit*2 else result["trend"].tolist()
+            season_list = result["seasonality"][:num_data_limit].tolist() + result["seasonality"][-num_data_limit:].tolist() if len(result["seasonality"]) > num_data_limit*2 else result["seasonality"].tolist()
+            remain_list = result["remainder"][:num_data_limit].tolist() + result["remainder"][-num_data_limit:].tolist() if len(result["remainder"]) > num_data_limit*2 else result["remainder"].tolist()
+        else:
+            trend_list = result["trend"].tolist()
+            season_list = result["seasonality"].tolist()
+            remain_list = result["remainder"].tolist()
+
         decomposition_result = {
-             "trend": result["trend"][:50].tolist() + result["trend"][-50:].tolist() if len(result["trend"]) > 100 else result["trend"].tolist(),
-             "seasonality": result["seasonality"][:50].tolist() + result["seasonality"][-50:].tolist() if len(result["seasonality"]) > 100 else result["seasonality"].tolist(),
-             "remainder": result["remainder"][:50].tolist() + result["remainder"][-50:].tolist() if len(result["remainder"]) > 100 else result["remainder"].tolist(),
+             "trend": trend_list,
+             "seasonality": season_list,
+             "remainder": remain_list,
              "method": method,
              "period": period,
              "model": model,
@@ -91,7 +106,7 @@ def decompose_time_series(
         error_message = f"시계열 분해 오류: {e}"
         return json.dumps({"status": "error", "message": error_message})
 
-
+# 검토 필요. made by claude, gemini
 def _estimate_seasonality_period(data: np.ndarray) -> int:
     """
     시계열 데이터의 계절성 주기를 추정합니다.
@@ -148,7 +163,7 @@ def _estimate_seasonality_period(data: np.ndarray) -> int:
     else:
         return 52  # 주간 데이터로 가정
 
-
+# 검토 필요. made by claude, gemini
 def _calculate_acf(data: np.ndarray, max_lag: int) -> np.ndarray:
     """
     시계열 데이터의 자기상관함수(ACF)를 계산합니다.
@@ -173,7 +188,7 @@ def _calculate_acf(data: np.ndarray, max_lag: int) -> np.ndarray:
     
     return result
 
-
+# 검토 필요. made by claude, gemini
 def _decompose_stl(data: np.ndarray, period: int) -> Dict[str, np.ndarray]:
     """
     STL(Seasonal and Trend decomposition using Loess) 방법으로 시계열을 분해합니다.
@@ -197,7 +212,7 @@ def _decompose_stl(data: np.ndarray, period: int) -> Dict[str, np.ndarray]:
         "remainder": stl_result.resid
     }
 
-
+# 검토 필요. made by claude, gemini
 def _decompose_seasonal(data: np.ndarray, period: int, model: str) -> Dict[str, np.ndarray]:
     """
     seasonal_decompose 방법으로 시계열을 분해합니다.
@@ -211,13 +226,15 @@ def _decompose_seasonal(data: np.ndarray, period: int, model: str) -> Dict[str, 
         Dict[str, np.ndarray]: 분해 결과
     """
     # 결측값 처리
+    # default="linear", 선형 보간
     data_clean = pd.Series(data).interpolate().values
     
     # 계절 분해 수행
     decomposition = seasonal_decompose(data_clean, model=model, period=period)
     
     # NaN 값 처리
-    trend = pd.Series(decomposition.trend).interpolate().values
+    # default="linear", 선형 보간
+    trend = pd.Series(decomposition.trend).interpolate().values 
     seasonal = pd.Series(decomposition.seasonal).interpolate().values
     resid = pd.Series(decomposition.resid).interpolate().values
     
@@ -241,30 +258,30 @@ def _visualize_decomposition(
 
     # 원본 데이터 -> Original Data
     axes[0].plot(data, label='Original Data')
-    axes[0].set_title('Original Time Series') # <-- 변경
+    axes[0].set_title('Original Time Series')
     axes[0].grid(True, linestyle='--', alpha=0.6)
 
     # 추세 성분 -> Trend Component
     axes[1].plot(decomposition["trend"], label='Trend', color='blue')
-    axes[1].set_title('Trend Component') # <-- 변경
+    axes[1].set_title('Trend Component')
     axes[1].grid(True, linestyle='--', alpha=0.6)
 
     # 계절성 성분 -> Seasonality Component
     axes[2].plot(decomposition["seasonality"], label='Seasonality', color='green')
-    axes[2].set_title(f'Seasonality Component (Period: {period})') # <-- 변경
+    axes[2].set_title(f'Seasonality Component (Period: {period})')
     axes[2].grid(True, linestyle='--', alpha=0.6)
 
     # 잔차 성분 -> Remainder Component
     axes[3].plot(decomposition["remainder"], label='Remainder', color='red')
-    axes[3].set_title('Remainder Component') # <-- 변경
+    axes[3].set_title('Remainder Component')
     axes[3].grid(True, linestyle='--', alpha=0.6)
 
     # 전체 타이틀 -> Overall Title
-    plt.suptitle(f'Time Series Decomposition ({method.upper()} Method)', fontsize=16) # <-- 변경
+    plt.suptitle(f'Time Series Decomposition ({method.upper()} Method)', fontsize=16)
     plt.tight_layout(rect=[0, 0, 1, 0.92]) # 여백 조정
 
-    # 이미지 저장 로직 (기존과 동일)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    # 이미지 저장 로직
+    timestamp = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y%m%d_%H%M%S")
     try:
         img_dir = Path(__file__).resolve().parent.parent.parent.parent / "temp_images"
     except NameError:
@@ -276,7 +293,7 @@ def _visualize_decomposition(
 
     return save_path
 
-
+# 검토 필요. made by claude, gemini
 def _calculate_trend_strength(trend: np.ndarray, remainder: np.ndarray) -> float:
     """
     추세 강도를 계산합니다.
@@ -297,7 +314,7 @@ def _calculate_trend_strength(trend: np.ndarray, remainder: np.ndarray) -> float
     strength = max(0, 1 - remainder_var / (trend_var + remainder_var))
     return float(strength)
 
-
+# 검토 필요. made by claude, gemini
 def _calculate_seasonality_strength(seasonality: np.ndarray, remainder: np.ndarray) -> float:
     """
     계절성 강도를 계산합니다.
@@ -318,7 +335,7 @@ def _calculate_seasonality_strength(seasonality: np.ndarray, remainder: np.ndarr
     strength = max(0, 1 - remainder_var / (seasonality_var + remainder_var))
     return float(strength)
 
-
+# 검토 필요. made by claude, gemini
 def _calculate_remainder_strength(remainder: np.ndarray, data: np.ndarray) -> float:
     """
     잔차 강도를 계산합니다.

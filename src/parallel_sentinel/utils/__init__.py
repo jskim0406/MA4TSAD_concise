@@ -7,7 +7,8 @@ from .parser import (
     parse_final_analysis, AnomalyResult, PatternResult,
     StatisticalResult, FinalAnalysisResult
 )
-from .ts_utils import detect_anomalies_ensemble # 필요에 따라 추가 유틸리티 임포트
+from .ts_utils import detect_anomalies_ensemble
+from .llm_utils import init_llm
 
 __all__ = [
     "extract_json_from_text",
@@ -19,5 +20,6 @@ __all__ = [
     "PatternResult",
     "StatisticalResult",
     "FinalAnalysisResult",
-    "detect_anomalies_ensemble", # 추가된 유틸리티
+    "detect_anomalies_ensemble",
+    "init_llm",
 ]

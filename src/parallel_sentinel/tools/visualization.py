@@ -1,6 +1,7 @@
+import io
 import os
 import json
-import io
+import pytz
 import base64
 import numpy as np
 import matplotlib
@@ -19,7 +20,7 @@ def ts2img(data: List[float], title: str = "Time Series Plot", highlight_indices
 
     Args:
         data (List[float]): Time series data to visualize.
-        title (str, optional): Title for the plot. Defaults to "Time Series Plot".
+        title (str, optional): Title for the plot in English. Defaults to "Time Series Plot".
         highlight_indices (List[int], optional): Indices to highlight on the plot. Defaults to None.
 
     Returns:
@@ -52,7 +53,7 @@ def ts2img(data: List[float], title: str = "Time Series Plot", highlight_indices
         if highlight_indices:
             ax.legend()
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        timestamp = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y%m%d_%H%M%S")
 
         # Set image save path
         try:
@@ -133,7 +134,7 @@ def ts2img_with_anomalies(
         ax.legend(loc='best')
 
         # Create image save directory
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        timestamp = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y%m%d_%H%M%S")
         try:
             img_dir = Path(__file__).resolve().parent.parent.parent.parent / "temp_images"
         except NameError:
@@ -244,7 +245,7 @@ def ts2img_multi_view(
         plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust layout for suptitle
 
         # Create image save directory
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        timestamp = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y%m%d_%H%M%S")
         try:
             img_dir = Path(__file__).resolve().parent.parent.parent.parent / "temp_images"
         except NameError:

@@ -65,7 +65,7 @@ def main_fed():
                        help="Use advanced anomaly detection")
     parser.add_argument("--debug", action="store_true", 
                        help="Enable debug mode")
-    parser.add_argument("--output", type=str, 
+    parser.add_argument("--output", type=str, default="src/federated_sentinel/output_test", 
                        help="Output directory for results")
     args = parser.parse_args()
     

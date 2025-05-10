@@ -6,8 +6,6 @@ import os
 import operator
 from typing import Annotated, List, Dict, Any, Optional, TypedDict, Union, Sequence, Literal
 from dotenv import load_dotenv, find_dotenv
-
-# 환경 변수 로드
 load_dotenv(find_dotenv())
 
 def setup_langsmith():
@@ -15,7 +13,6 @@ def setup_langsmith():
     os.environ["LANGSMITH_TRACING"] = os.getenv("LANGSMITH_TRACING", "false")
     os.environ["LANGSMITH_API_KEY"] = os.getenv("LANGSMITH_API_KEY", "")
     os.environ["LANGSMITH_PROJECT"] = os.getenv("LANGSMITH_PROJECT", "")
-
 setup_langsmith()
 
 from langsmith import traceable
@@ -109,8 +106,6 @@ def create_workflow(
     workflow.add_conditional_edges(
         "supervisor",
         route_after_supervisor
-        # 라우팅 함수가 직접 대상 노드 이름 리스트 또는 END를 반환하므로,
-        # 여기서는 매핑 딕셔너리가 필요 없습니다.
     )
 
     # 그래프 컴파일 및 반환
@@ -121,10 +116,7 @@ def create_workflow(
         return compiled_workflow
     except Exception as e:
         print(f"오류: 워크플로우 생성 실패: {e}") # 컴파일 오류 시 상세 메시지 출력
-        # 필요시 여기서 더 자세한 디버깅 정보 출력 가능
-        # import traceback
-        # traceback.print_exc()
-        raise # 오류를 다시 발생시켜 호출자에게 알림
+        raise
 
 
 @traceable
@@ -140,24 +132,19 @@ def run_workflow(workflow, time_series_data: Union[List[float], Dict[str, Any]],
     Returns:
         Dict[str, Any]: 워크플로우의 최종 상태
     """
-    # 초기 상태 설정 시 decomposition_data를 빈 dict로 초기화하는 것이 중요
-    if isinstance(time_series_data, dict) and "messages" in time_series_data:
-         initial_state = time_series_data
-         if "decomposition_data" not in initial_state:
-             initial_state["decomposition_data"] = {} # 누락 시 추가
-    else:
-         initial_state = {
-             "ts_data": time_series_data,
-             "messages": [
-                 HumanMessage(content=f"이 시계열 데이터를 분석해주세요: {time_series_data[:10]}... (길이: {len(time_series_data)})")
-             ],
-             "decomposition_data": {}, # 명시적 초기화
-             "trend_analysis": [],
-             "seasonality_analysis": [],
-             "remainder_analysis": [],
-             "final_analysis": None,
-             "config": kwargs.pop("config", {})
-         }
+
+    initial_state = {
+        "ts_data": time_series_data,
+        "messages": [
+            HumanMessage(content=f"이 시계열 데이터를 분석해주세요: {time_series_data[:10]}... (길이: {len(time_series_data)})")
+        ],
+        "decomposition_data": {}, # 명시적 초기화
+        "trend_analysis": [],
+        "seasonality_analysis": [],
+        "remainder_analysis": [],
+        "final_analysis": None,
+        "config": kwargs.pop("config", {}),
+    }
 
     print(f"병렬 워크플로우 실행 시작 - 시계열 데이터 길이: {len(initial_state['ts_data'])}")
     final_state = workflow.invoke(initial_state, **kwargs)

@@ -3,6 +3,27 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# 가상 환경
+venv/
+env/
+.env
+.venv/
+ENV/
+
+# 패키지 설치 관련
+*.so
+*.dylib
+*.egg
+*.egg-info/
+.installed.cfg
+dist/
+build/
+eggs/
+parts/
+sdist/
+develop-eggs/
+.Python
+
 # Jupyter Notebook 체크포인트
 .ipynb_checkpoints
 */.ipynb_checkpoints/*
@@ -10,18 +31,31 @@ __pycache__/
 # 특정 디렉토리
 src/study/
 src/timesentinel/
+src/.langgraph_api/
+
+# IDE 설정
+.idea/
+.vscode/
+*.swp
+*.swo
 
 # macOS 파일
 .DS_Store
 */.DS_Store
 
-# LangGraph 파일
-src/.langgraph_api/
+# 테스트 관련
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# 로그 및 임시 파일
+*.log
+*.tmp
+*.bak
+.*.swp
 
 # 기타 임시 파일
-*.so
-*.dylib
-*.egg
-*.egg-info/
-.installed.cfg
-*.egg
+pip-log.txt
+pip-delete-this-directory.txt
