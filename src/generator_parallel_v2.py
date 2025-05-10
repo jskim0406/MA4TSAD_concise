@@ -19,21 +19,12 @@ from typing import List, Dict, Any, Literal
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
-# LangSmith 설정 함수
-def setup_langsmith(quantize_info=None):
-    """LangSmith 설정 (설정된 경우)"""
-    os.environ["LANGSMITH_TRACING"] = os.getenv("LANGSMITH_TRACING", "true")  # 기본값 true로 변경
-    os.environ["LANGSMITH_API_KEY"] = os.getenv("LANGSMITH_API_KEY", "")
-    if quantize_info and quantize_info["applied"]:
-        os.environ["LANGSMITH_PROJECT"] = os.getenv(f"LANGSMITH_PROJECT", f"test-parallel-sentinel-v2-quantized_r{quantize_info['range']}_{quantize_info['method']}")
-    else:
-        os.environ["LANGSMITH_PROJECT"] = os.getenv(f"LANGSMITH_PROJECT", f"test-parallel-sentinel-v2")
-
-# LangChain 및 Parallel Sentinel V2 모듈 임포트
+# LangChain 및 관련 모듈 임포트
 try:
-    from langsmith import traceable
+    from langsmith import traceable, trace
+    from langsmith.run_helpers import get_current_run_tree
     from langchain.globals import set_debug
-
+    
     # Parallel Sentinel V2 구성 요소 임포트
     from parallel_sentinel_v2.agents import (
         create_supervisor_agent, create_trend_analyzer_agent,
@@ -44,10 +35,6 @@ try:
         visualization_tools, statistics_tools, 
         frequency_tools, transformation_tools
     )
-    tools = visualization_tools + statistics_tools + frequency_tools + transformation_tools
-    print(f"도구 바인딩 완료 - 총 {len(tools)}개 ({len(visualization_tools)} 시각화, "
-        f"{len(statistics_tools)} 통계, {len(frequency_tools)} 주파수, "
-        f"{len(transformation_tools)} 변환)")
     from parallel_sentinel_v2.graph import create_workflow, run_workflow
     from parallel_sentinel_v2.utils.llm_utils import init_llm
     from parallel_sentinel_v2.utils.ts_utils import quantize_time_series, get_quantization_info
@@ -103,9 +90,24 @@ def load_data(args):
     return time_series_data, data_source
 
 
-@traceable
+@traceable(
+    name="paralle_sentinel_v2", 
+    run_type="chain"
+)
 def main():
     """Parallel Sentinel V2 라이브러리 메인 실행 함수"""
+    # 현재 LangSmith Run Tree 가져오기
+    run_tree = get_current_run_tree()
+    if run_tree:
+        # 메타데이터 및 태그 설정
+        run_tree.tags.extend(["parallel_sentinel_v2", "time_series_analysis"])
+    
+    # 도구 바인딩 출력
+    tools = visualization_tools + statistics_tools + frequency_tools + transformation_tools
+    print(f"도구 바인딩 완료 - 총 {len(tools)}개 ({len(visualization_tools)} 시각화, "
+          f"{len(statistics_tools)} 통계, {len(frequency_tools)} 주파수, "
+          f"{len(transformation_tools)} 변환)")
+    
     parser = argparse.ArgumentParser(description="Parallel Sentinel V2 - 시각적 추론 기반 시계열 이상 탐지 시스템")
     parser.add_argument("--data", type=str, help="CSV 데이터 파일 경로")
     parser.add_argument("--debug", action="store_true", help="LangChain 디버그 모드 활성화")
@@ -152,9 +154,25 @@ def main():
     if quantize_info["applied"]:
         print(f"\n시계열 데이터 양자화 적용: {quantize_info['message']}")
         time_series_data = quantized_data
+    print("양자화 정보:", quantize_info)
     
-    # LangSmith 설정 업데이트 (양자화 정보 포함)
-    setup_langsmith(quantize_info)
+    # 양자화 정보를 LangSmith 메타데이터에 추가
+    if run_tree and quantize_info.get("applied", False):
+        # 양자화 메타데이터 추가
+        run_tree.metadata["quantize_range"] = quantize_info.get("range", 1)
+        run_tree.metadata["quantize_method"] = quantize_info.get("method", "none")
+        run_tree.metadata["original_length"] = quantize_info.get("original_length", len(time_series_data))
+        run_tree.metadata["quantized_length"] = quantize_info.get("quantized_length", len(time_series_data))
+        run_tree.metadata["compression_ratio"] = quantize_info.get("compression_ratio", 1.0)
+        
+        # 양자화 태그 추가
+        tags = [
+            f"quantized",
+            f"range_{quantize_info['range']}",
+            f"method_{quantize_info['method']}"
+        ]
+        run_tree.tags.extend(tags)
+        print(f"LangSmith 메타데이터 및 태그 설정 완료: {tags}")
 
     # 멀티모달 언어 모델 초기화
     try:
@@ -209,8 +227,42 @@ def main():
         }
     }
 
+    # LangSmith 메타데이터를 추가한 워크플로우 실행
     try:
-        final_state = run_workflow(workflow, time_series_data, config=config)
+        # 메타데이터와 태그 정보를 langsmith_extra로 전달
+        langsmith_extra = {
+            "metadata": {
+                "data_source": data_source,
+                "time_series_length": len(time_series_data),
+                "llm_provider": args.llm_provider,
+            },
+            "tags": ["time_series", "anomaly_detection"]
+        }
+        
+        # 양자화 정보 추가
+        if quantize_info.get("applied", False):
+            langsmith_extra["metadata"].update({
+                "quantize_range": quantize_info["range"],
+                "quantize_method": quantize_info["method"],
+                "compression_ratio": quantize_info["compression_ratio"]
+            })
+            langsmith_extra["tags"].extend([
+                "quantized", 
+                f"range_{quantize_info['range']}", 
+                f"method_{quantize_info['method']}"
+            ])
+        
+        # 워크플로우 실행시에도 LangSmith 메타데이터 전달
+        with trace(
+            name="Time Series Analysis Workflow",
+            run_type="chain",
+            metadata=langsmith_extra["metadata"],
+            tags=langsmith_extra["tags"]
+        ) as workflow_run:
+            final_state = run_workflow(workflow, time_series_data, config=config)
+            # 실행 후 추가 메타데이터 설정
+            workflow_run.metadata["execution_time_seconds"] = (datetime.now() - start_time).total_seconds()
+            
     except Exception as e:
         print(f"\n오류: 워크플로우 실행 중 예외 발생: {e}")
         import traceback

@@ -8,13 +8,6 @@ from typing import Annotated, List, Dict, Any, Optional, TypedDict, Union, Seque
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
-def setup_langsmith():
-    """LangSmith 설정 (설정된 경우)"""
-    os.environ["LANGSMITH_TRACING"] = os.getenv("LANGSMITH_TRACING", "false")
-    os.environ["LANGSMITH_API_KEY"] = os.getenv("LANGSMITH_API_KEY", "")
-    os.environ["LANGSMITH_PROJECT"] = os.getenv("LANGSMITH_PROJECT", "parallel-sentinel-v2")
-setup_langsmith()
-
 from langsmith import traceable
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import StateGraph, START, END
@@ -133,16 +126,18 @@ def run_workflow(workflow, time_series_data: Union[List[float], Dict[str, Any]],
     """
     config = kwargs.pop("config", {})
     
-    # 양자화 정보가 있으면 메타데이터에 추가
+    # 양자화 정보가 있으면 LangSmith 프로젝트 이름 업데이트
     if "metadata" in config and "quantization" in config["metadata"]:
         quantize_info = config["metadata"]["quantization"]
-        quantize_message = ""
-        if quantize_info["applied"]:
+        if quantize_info.get("applied", False):
             quantize_message = f"Time series data has been quantized using {quantize_info['method']} method with range {quantize_info['range']}. "
             quantize_message += f"Original length: {quantize_info['original_length']}, Quantized length: {quantize_info['quantized_length']}."
+        else:
+            # applied가 False인 경우에도 적절한 메시지 제공
+            quantize_message = "Quantization was configured but not applied to the data."
     else:
         quantize_message = "No quantization applied."
-
+    
     initial_state = {
         "ts_data": time_series_data,
         "messages": [
