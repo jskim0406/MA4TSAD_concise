@@ -9,17 +9,16 @@ import os
 import json
 import base64
 import numpy as np
-import re
 from typing import Dict, Any, List, Callable
-from scipy import stats, signal
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
 from langgraph.prebuilt import ToolNode
 
-from parallel_sentinel_v2.graph.workflow import TimeSeriesState
-from parallel_sentinel_v2.utils.llm_utils import process_visualization_result
+from src.parallel_sentinel_v2.graph.workflow import TimeSeriesState
+from src.parallel_sentinel_v2.utils.llm_utils import process_visualization_result
+from src.parallel_sentinel_v2.models.schema import RemainderAnalysis, Anomaly
 
 
 def create_remainder_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = None):
@@ -64,6 +63,8 @@ def create_remainder_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = 
     2. 시각화된 이미지를 분석하여 잔차의 특성 및 이상치 유형을 파악하세요.
     3. 필요시 get_time_series_statistics 도구로 통계 정보를 확인하세요.
     4. 결과를 명확하고 구조화된 형식으로 제공하고, 주요 발견사항을 강조하세요.
+    
+    반드시 요청된 구조화된 출력 형식(RemainderAnalysis)으로 응답해야 합니다. 잔차의 정규 분포 여부와 이상치는 정확히 명시해주세요.
     """
 
     tool_node = ToolNode(tools) if tools else None
@@ -96,7 +97,7 @@ def create_remainder_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = 
             f"잔차 강도: {decomposition_data.get('stats', {}).get('remainder_strength', 'N/A')}",
             "",
             "전체 잔차 데이터:",
-            f"{remainder_data}",
+            f"{remainder_data[:20]} ... (총 {len(remainder_data)}개 항목)",
             "",
             "1. 먼저 ts2img_bytes 도구를 사용하여 잔차 데이터를 시각화하세요.",
             "2. 시각화된 이미지를 보고 잔차의 분포와 패턴을 분석하세요.",
@@ -147,6 +148,7 @@ def create_remainder_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = 
         
         content = ""
         visualization_content = None
+        remainder_strength = float(state.get("decomposition_data", {}).get("stats", {}).get("remainder_strength", 0))
         
         # 도구 호출 처리
         if tools and hasattr(ai_message, "tool_calls") and ai_message.tool_calls:
@@ -167,72 +169,69 @@ def create_remainder_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = 
                     except Exception as viz_err:
                         print(f"시각화 결과 처리 중 오류: {viz_err}")
             
-            # 도구 결과를 포함한 후속 LLM 호출
+            # 도구 결과를 포함한 후속 LLM 호출 (구조화된 출력 사용)
             if visualization_content:
-                # 멀티모달 입력(이미지 + 텍스트)으로 LLM 호출
-                follow_up_message = HumanMessage(content=visualization_content)
-                ai_follow_up = llm.invoke([follow_up_message])
+                # 멀티모달 입력(이미지 + 텍스트)으로 LLM 호출 - 구조화된 출력 형식 지정
+                structured_llm = llm.with_structured_output(RemainderAnalysis)
+                
+                follow_up_message = HumanMessage(content=[
+                    {"type": "text", "text": f"이 잔차 이미지를 분석하고 이상치를 찾아서 RemainderAnalysis 구조로 응답해주세요. "
+                                          f"잔차가 정규 분포를 따르는지 여부를 판단하고, 발견한 이상치에는 정확한 인덱스와 유형을 지정해주세요. "
+                                          f"잔차 강도는 {remainder_strength}입니다."},
+                    *[item for item in visualization_content if item["type"] == "image_url"]
+                ])
+                structured_result = structured_llm.invoke([follow_up_message])
+                analysis_content = structured_result.llm_analysis if structured_result.llm_analysis else "잔차 시각적 분석 완료"
             else:
-                # 일반 텍스트 입력으로 LLM 호출
+                # 일반 텍스트 입력으로 구조화된 LLM 호출
+                structured_llm = llm_with_tools.with_structured_output(RemainderAnalysis)
+                
                 follow_up_prompt = remainder_analyzer_prompt.invoke({
                     "messages": messages, 
-                    "input": "도구 결과를 바탕으로 잔차 데이터의 분석을 완료해주세요. 잔차의 특성과 이상치 유형을 상세히 설명하고, 이상치가 위치한 인덱스를 정확히 명시해주세요."
+                    "input": f"도구 결과를 바탕으로 잔차 데이터의 분석을 완료해주세요. 잔차가 정규 분포를 따르는지 여부를 판단하고, "
+                             f"이상치 유형을 상세히 설명하고, 이상치가 위치한 인덱스를 정확히 명시해주세요. "
+                             f"잔차 강도는 {remainder_strength}입니다."
                 })
-                ai_follow_up = llm_with_tools.invoke(follow_up_prompt)
+                structured_result = structured_llm.invoke(follow_up_prompt)
+                analysis_content = structured_result.llm_analysis
             
-            messages.append(ai_follow_up)
-            content = ai_follow_up.content
+            # 에이전트 이름으로 메시지 추가
+            ai_message_with_name = AIMessage(content=analysis_content, name="remainder_analyzer")
+            messages.append(ai_message_with_name)
+            
+            # 잔차 분석 결과에 강도 정보 추가
+            structured_result.strength = remainder_strength
+            
+            # 구조화된 결과에서 잔차 분석 결과 가져오기
+            remainder_analysis = structured_result.model_dump()
         else:
+            # 도구 호출이 없는 경우, 직접 구조화된 출력 요청
             content = ai_message.content
             
-        # LLM 응답에서 이상치 정보 추출
-        anomalies = []
-        anomaly_types = ["PersistentLevelShiftUp", "PersistentLevelShiftDown", 
-                         "TransientLevelShiftUp", "TransientLevelShiftDown", 
-                         "SingleSpike", "SingleDip", "MultipleSpikes", "MultipleDips"]
-        
-        for anomaly_type in anomaly_types:
-            if anomaly_type in content:
-                # 해당 이상치 유형이 언급된 경우, 인덱스 정보 추출 시도
-                # 인덱스 패턴 검색: 숫자, 인덱스, index 등의 키워드 주변 숫자 찾기
-                index_patterns = [
-                    rf"{anomaly_type}.*?인덱스\s*?(\d+)",
-                    rf"{anomaly_type}.*?index\s*?(\d+)",
-                    rf"{anomaly_type}.*?위치\s*?(\d+)"
-                ]
-                
-                for pattern in index_patterns:
-                    matches = re.findall(pattern, content, re.IGNORECASE)
-                    if matches:
-                        for match in matches:
-                            try:
-                                index = int(match)
-                                anomalies.append({
-                                    "type": anomaly_type,
-                                    "index": index,
-                                    "confidence": 0.9  # LLM이 명시적으로 언급했으므로 높은 신뢰도
-                                })
-                            except ValueError:
-                                pass
-        
-        # 잔차의 분포 특성 추출
-        is_normal = "정규 분포" in content or "normal distribution" in content
-        
-        # 에이전트 이름으로 메시지 추가 및 결과 생성
-        ai_message_with_name = AIMessage(content=content, name="remainder_analyzer")
-        
-        # 잔차 분석 결과 생성
-        remainder_analysis = {
-            "is_normal_distribution": is_normal,
-            "anomalies": anomalies,
-            "strength": float(state.get("decomposition_data", {}).get("stats", {}).get("remainder_strength", 0)),
-            "llm_analysis": content,
-            "visual_analysis": True if visualization_content else False  # 시각적 분석 수행 여부 표시
-        }
+            # 구조화된 출력 형식으로 LLM 재호출
+            structured_llm = llm.with_structured_output(RemainderAnalysis)
+            structured_prompt = f"""
+            잔차 데이터 분석 결과를 바탕으로 RemainderAnalysis 구조로 정보를 제공해주세요.
+            잔차가 정규 분포를 따르는지 여부를 판단하고, 발견된 이상치가 있다면 각각의 인덱스와 유형을 정확히 지정해주세요.
+            
+            잔차 강도는 {remainder_strength}입니다.
+            이전 분석: {content}
+            """
+            structured_result = structured_llm.invoke([HumanMessage(content=structured_prompt)])
+            
+            # 에이전트 이름으로 메시지 추가
+            ai_message_with_name = AIMessage(content=structured_result.llm_analysis or content, name="remainder_analyzer")
+            messages.append(ai_message_with_name)
+            
+            # 잔차 분석 결과에 강도 정보 추가
+            structured_result.strength = remainder_strength
+            
+            # 구조화된 결과에서 잔차 분석 결과 가져오기
+            remainder_analysis = structured_result.model_dump()
         
         return {
-            "messages": messages[:-1] + [ai_message_with_name],  # 마지막 메시지만 이름 추가
-            "remainder_analysis": [remainder_analysis]
+            "messages": messages,
+            "remainder_analysis": [remainder_analysis]  # 리스트 형식으로 반환해야 함
         }
     
     return remainder_analyzer_agent

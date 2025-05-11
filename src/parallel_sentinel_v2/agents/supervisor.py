@@ -11,8 +11,9 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 
-from parallel_sentinel_v2.graph.workflow import TimeSeriesState
-from parallel_sentinel_v2.tools.transformation import get_time_series_decomposition
+from src.parallel_sentinel_v2.graph.workflow import TimeSeriesState
+from src.parallel_sentinel_v2.tools.transformation import get_time_series_decomposition
+from src.parallel_sentinel_v2.models.schema import FinalAnalysis, Anomaly
 
 
 def create_supervisor_agent(llm: BaseChatModel):
@@ -61,6 +62,8 @@ def create_supervisor_agent(llm: BaseChatModel):
     여러 에이전트가 같은 인덱스를 이상치로 식별한 경우, 그 신뢰도가 더 높음을 강조하세요.
     
     원본 시계열 분석과 분해된 구성 요소 분석 결과를 비교하고, 어떤 분석 방법이 이상치를 더 명확하게 파악했는지 설명하세요.
+    
+    최종 분석 결과는 구조화된 FinalAnalysis 형식으로 제공해주세요.
     """
 
     supervisor_prompt = ChatPromptTemplate.from_messages([
@@ -206,7 +209,6 @@ def create_supervisor_agent(llm: BaseChatModel):
             return updates
         
         # 모든 분석이 완료되었다면 최종 분석 생성
-        # 수정: 모든 분석 결과를 확인하고, original_ts_analysis 결과가 있는지 명시적으로 로깅
         print(f"Supervisor: 분석 상태 확인 - 원본: {has_original}, 추세: {has_trend}, 계절성: {has_seasonality}, 잔차: {has_remainder}")
         
         # 모든 분석이 완료되었다면 최종 분석 생성
@@ -214,10 +216,11 @@ def create_supervisor_agent(llm: BaseChatModel):
             print("Supervisor: 모든 분석 결과 수신. 최종 분석 생성 중...")
             print(f"Supervisor: 원본 분석 결과 길이: {len(state['original_ts_analysis'])}")
             
-            # LLM 호출하여 최종 분석 생성
+            # 구조화된 출력으로 최종 분석 생성
+            structured_llm = llm.with_structured_output(FinalAnalysis)
             prompt_result = supervisor_prompt.invoke({"input": input_text})
-            llm_result = llm.invoke(prompt_result)
-            content = llm_result.content
+            structured_result = structured_llm.invoke(prompt_result)
+            content = structured_result.summary
             
             # 최종 분석 메시지를 메시지 히스토리에 추가
             messages.append(AIMessage(content=content, name="supervisor"))
@@ -234,13 +237,17 @@ def create_supervisor_agent(llm: BaseChatModel):
             
             # 이상치 목록을 각 구성 요소별로 추가 (방어적 프로그래밍 적용)
             if latest_original and 'anomalies' in latest_original:
-                all_anomalies.extend([{**a, 'source': 'original'} for a in latest_original['anomalies']])
+                for anomaly in latest_original['anomalies']:
+                    all_anomalies.append({**anomaly, 'source': 'original'})
             if latest_trend and 'anomalies' in latest_trend:
-                all_anomalies.extend([{**a, 'source': 'trend'} for a in latest_trend['anomalies']])
+                for anomaly in latest_trend['anomalies']:
+                    all_anomalies.append({**anomaly, 'source': 'trend'})
             if latest_seasonality and 'anomalies' in latest_seasonality:
-                all_anomalies.extend([{**a, 'source': 'seasonality'} for a in latest_seasonality['anomalies']])
+                for anomaly in latest_seasonality['anomalies']:
+                    all_anomalies.append({**anomaly, 'source': 'seasonality'})
             if latest_remainder and 'anomalies' in latest_remainder:
-                all_anomalies.extend([{**a, 'source': 'remainder'} for a in latest_remainder['anomalies']])
+                for anomaly in latest_remainder['anomalies']:
+                    all_anomalies.append({**anomaly, 'source': 'remainder'})
             
             # 같은 인덱스에 대해 여러 에이전트가 탐지한 경우 신뢰도 증가
             index_to_anomalies = {}
@@ -274,11 +281,12 @@ def create_supervisor_agent(llm: BaseChatModel):
             # 최종 분석 구조화
             final_analysis = {
                 "summary": content,
+                "combined_anomalies": combined_anomalies,
+                "recommendations": structured_result.recommendations,
                 "original_analysis": latest_original,
                 "trend_analysis": latest_trend,
                 "seasonality_analysis": latest_seasonality,
                 "remainder_analysis": latest_remainder,
-                "combined_anomalies": combined_anomalies,
                 "decomposition_data": state["decomposition_data"]
             }
             

@@ -8,17 +8,16 @@ import os
 import json
 import base64
 import numpy as np
-import re
 from typing import Dict, Any, List, Callable
-from scipy import stats
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
 from langgraph.prebuilt import ToolNode
 
-from parallel_sentinel_v2.graph.workflow import TimeSeriesState
-from parallel_sentinel_v2.utils.llm_utils import process_visualization_result
+from src.parallel_sentinel_v2.graph.workflow import TimeSeriesState
+from src.parallel_sentinel_v2.utils.llm_utils import process_visualization_result
+from src.parallel_sentinel_v2.models.schema import OriginalTimeSeriesAnalysis, Anomaly
 
 
 def create_original_time_series_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = None):
@@ -60,6 +59,8 @@ def create_original_time_series_analyzer_agent(llm: BaseChatModel, tools: List[C
     2. 시각화된 이미지를 분석하여 시계열의 특성 및 이상치 유형을 파악하세요.
     3. 필요시 get_time_series_statistics 도구로 통계 정보를 확인하세요.
     4. 결과를 명확하고 구조화된 형식으로 제공하고, 주요 발견사항을 강조하세요.
+    
+    반드시 요청된 구조화된 출력 형식(OriginalTimeSeriesAnalysis)으로 응답해야 합니다. 이상치는 인덱스와 유형을 정확히 명시해주세요.
     """
 
     tool_node = ToolNode(tools) if tools else None
@@ -86,7 +87,7 @@ def create_original_time_series_analyzer_agent(llm: BaseChatModel, tools: List[C
             "5. 시계열의 전반적인 특성, 이상치, 잠재적 패턴에 대한 종합적인 분석 결과를 제공하세요.",
             "",
             "전체 시계열 데이터는 다음과 같습니다:",
-            f"{ts_data}"
+            f"{ts_data[:20]} ... (총 {len(ts_data)}개 항목)"
         ]
         
         return "\n".join(message)
@@ -140,68 +141,66 @@ def create_original_time_series_analyzer_agent(llm: BaseChatModel, tools: List[C
                     except Exception as viz_err:
                         print(f"시각화 결과 처리 중 오류: {viz_err}")
             
-            # 도구 결과를 포함한 후속 LLM 호출
+            # 도구 결과를 포함한 후속 LLM 호출 (구조화된 출력 사용)
             if visualization_content:
-                # 멀티모달 입력(이미지 + 텍스트)으로 LLM 호출
-                follow_up_message = HumanMessage(content=visualization_content)
-                ai_follow_up = llm.invoke([follow_up_message])
+                # 멀티모달 입력(이미지 + 텍스트)으로 LLM 호출 - 구조화된 출력 형식 지정
+                structured_llm = llm.with_structured_output(OriginalTimeSeriesAnalysis)
+                
+                follow_up_message = HumanMessage(content=[
+                    {"type": "text", "text": "이 시계열 이미지를 분석하고 이상치를 찾아서 OriginalTimeSeriesAnalysis 구조로 응답해주세요. "
+                                          "발견한 이상치에는 정확한 인덱스와 유형을 지정해주세요."},
+                    *[item for item in visualization_content if item["type"] == "image_url"]
+                ])
+                structured_result = structured_llm.invoke([follow_up_message])
+                analysis_content = structured_result.llm_analysis if structured_result.llm_analysis else "시각적 분석 완료"
             else:
-                # 일반 텍스트 입력으로 LLM 호출
+                # 일반 텍스트 입력으로 구조화된 LLM 호출
+                structured_llm = llm_with_tools.with_structured_output(OriginalTimeSeriesAnalysis)
+                
                 follow_up_prompt = original_analyzer_prompt.invoke({
                     "messages": messages, 
                     "input": "도구 결과를 바탕으로 원본 시계열 데이터의 분석을 완료해주세요. 시계열의 특성과 이상치 유형을 상세히 설명하고, 이상치가 위치한 인덱스를 정확히 명시해주세요."
                 })
-                ai_follow_up = llm_with_tools.invoke(follow_up_prompt)
+                structured_result = structured_llm.invoke(follow_up_prompt)
+                analysis_content = structured_result.llm_analysis
             
-            messages.append(ai_follow_up)
-            content = ai_follow_up.content
+            # 에이전트 이름으로 메시지 추가
+            ai_message_with_name = AIMessage(content=analysis_content, name="original_time_series_analyzer")
+            messages.append(ai_message_with_name)
+            
+            # 구조화된 결과에서 원본 시계열 분석 결과 가져오기
+            original_ts_analysis = {
+                "anomalies": [anomaly.model_dump() for anomaly in structured_result.anomalies],
+                "visual_analysis": bool(visualization_content),
+                "llm_analysis": analysis_content
+            }
         else:
+            # 도구 호출이 없는 경우, 직접 구조화된 출력 요청
             content = ai_message.content
             
-        # LLM 응답에서 이상치 정보 추출
-        anomalies = []
-        anomaly_types = ["PersistentLevelShiftUp", "PersistentLevelShiftDown", 
-                         "TransientLevelShiftUp", "TransientLevelShiftDown", 
-                         "SingleSpike", "SingleDip", "MultipleSpikes", "MultipleDips"]
-        
-        for anomaly_type in anomaly_types:
-            if anomaly_type in content:
-                # 해당 이상치 유형이 언급된 경우, 인덱스 정보 추출 시도
-                # 인덱스 패턴 검색: 숫자, 인덱스, index 등의 키워드 주변 숫자 찾기
-                index_patterns = [
-                    rf"{anomaly_type}.*?인덱스\s*?(\d+)",
-                    rf"{anomaly_type}.*?index\s*?(\d+)",
-                    rf"{anomaly_type}.*?위치\s*?(\d+)",
-                    rf"인덱스\s*?(\d+).*?{anomaly_type}",  # 순서가 바뀌는 경우 대응
-                    rf"index\s*?(\d+).*?{anomaly_type}"    # 영어로 쓰이는 경우 대응
-                ]
-                
-                for pattern in index_patterns:
-                    matches = re.findall(pattern, content, re.IGNORECASE)
-                    if matches:
-                        for match in matches:
-                            try:
-                                index = int(match)
-                                anomalies.append({
-                                    "type": anomaly_type,
-                                    "index": index,
-                                    "confidence": 0.9  # LLM이 명시적으로 언급했으므로 높은 신뢰도
-                                })
-                            except ValueError:
-                                pass
-        
-        # 에이전트 이름으로 메시지 추가 및 결과 생성
-        ai_message_with_name = AIMessage(content=content, name="original_time_series_analyzer")
-        
-        # 원본 시계열 분석 결과 생성
-        original_ts_analysis = {
-            "anomalies": anomalies,
-            "llm_analysis": content,
-            "visual_analysis": True if visualization_content else False  # 시각적 분석 수행 여부 표시
-        }
+            # 구조화된 출력 형식으로 LLM 재호출
+            structured_llm = llm.with_structured_output(OriginalTimeSeriesAnalysis)
+            structured_prompt = f"""
+            원본 시계열 데이터 분석 결과를 바탕으로 OriginalTimeSeriesAnalysis 구조로 정보를 제공해주세요.
+            발견된 이상치가 있다면 각각의 인덱스와 유형을 정확히 지정해주세요.
+            
+            이전 분석: {content}
+            """
+            structured_result = structured_llm.invoke([HumanMessage(content=structured_prompt)])
+            
+            # 에이전트 이름으로 메시지 추가
+            ai_message_with_name = AIMessage(content=structured_result.llm_analysis or content, name="original_time_series_analyzer")
+            messages.append(ai_message_with_name)
+            
+            # 구조화된 결과에서 원본 시계열 분석 결과 가져오기
+            original_ts_analysis = {
+                "anomalies": [anomaly.model_dump() for anomaly in structured_result.anomalies],
+                "visual_analysis": False,
+                "llm_analysis": structured_result.llm_analysis or content
+            }
         
         return {
-            "messages": messages[:-1] + [ai_message_with_name],  # 마지막 메시지만 이름 추가
+            "messages": messages,
             "original_ts_analysis": [original_ts_analysis]  # 리스트 형식으로 반환해야 함
         }
     

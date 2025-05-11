@@ -8,17 +8,16 @@ import os
 import json
 import base64
 import numpy as np
-import re
 from typing import Dict, Any, List, Callable
-from scipy import stats
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
 from langgraph.prebuilt import ToolNode
 
-from parallel_sentinel_v2.graph.workflow import TimeSeriesState
-from parallel_sentinel_v2.utils.llm_utils import process_visualization_result
+from src.parallel_sentinel_v2.graph.workflow import TimeSeriesState
+from src.parallel_sentinel_v2.utils.llm_utils import process_visualization_result
+from src.parallel_sentinel_v2.models.schema import TrendAnalysis, Anomaly
 
 
 def create_trend_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = None):
@@ -60,6 +59,8 @@ def create_trend_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = None
     2. 시각화된 이미지를 분석하여 추세의 특성 및 이상치 유형을 파악하세요.
     3. 필요시 get_time_series_statistics 도구로 통계 정보를 확인하세요.
     4. 결과를 명확하고 구조화된 형식으로 제공하고, 주요 발견사항을 강조하세요.
+    
+    반드시 요청된 구조화된 출력 형식(TrendAnalysis)으로 응답해야 합니다. 추세 방향과 이상치는 정확히 명시해주세요.
     """
 
     tool_node = ToolNode(tools) if tools else None
@@ -92,7 +93,7 @@ def create_trend_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = None
             f"추세 강도: {decomposition_data.get('stats', {}).get('trend_strength', 'N/A')}",
             "",
             "전체 추세 데이터:",
-            f"{trend_data}",
+            f"{trend_data[:20]} ... (총 {len(trend_data)}개 항목)",
             "",
             "아래 절차를 반드시 순서대로 따라주세요:",
             "1. 먼저 ts2img_bytes 도구를 사용하여 추세 데이터를 시각화하세요 (필수).",
@@ -144,6 +145,7 @@ def create_trend_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = None
         
         content = ""
         visualization_content = None
+        trend_strength = float(state.get("decomposition_data", {}).get("stats", {}).get("trend_strength", 0))
         
         # 도구 호출 처리
         if tools and hasattr(ai_message, "tool_calls") and ai_message.tool_calls:
@@ -164,78 +166,69 @@ def create_trend_analyzer_agent(llm: BaseChatModel, tools: List[Callable] = None
                     except Exception as viz_err:
                         print(f"시각화 결과 처리 중 오류: {viz_err}")
             
-            # 도구 결과를 포함한 후속 LLM 호출
+            # 도구 결과를 포함한 후속 LLM 호출 (구조화된 출력 사용)
             if visualization_content:
-                # 멀티모달 입력(이미지 + 텍스트)으로 LLM 호출
-                follow_up_message = HumanMessage(content=visualization_content)
-                ai_follow_up = llm.invoke([follow_up_message])
+                # 멀티모달 입력(이미지 + 텍스트)으로 LLM 호출 - 구조화된 출력 형식 지정
+                structured_llm = llm.with_structured_output(TrendAnalysis)
+                
+                follow_up_message = HumanMessage(content=[
+                    {"type": "text", "text": f"이 추세 이미지를 분석하고 이상치를 찾아서 TrendAnalysis 구조로 응답해주세요. "
+                                          f"추세의 방향(증가/감소/안정적)과 발견한 이상치에는 정확한 인덱스와 유형을 지정해주세요. "
+                                          f"추세 강도는 {trend_strength}입니다."},
+                    *[item for item in visualization_content if item["type"] == "image_url"]
+                ])
+                structured_result = structured_llm.invoke([follow_up_message])
+                analysis_content = structured_result.llm_analysis if structured_result.llm_analysis else "추세 시각적 분석 완료"
             else:
-                # 일반 텍스트 입력으로 LLM 호출
+                # 일반 텍스트 입력으로 구조화된 LLM 호출
+                structured_llm = llm_with_tools.with_structured_output(TrendAnalysis)
+                
                 follow_up_prompt = trend_analyzer_prompt.invoke({
                     "messages": messages, 
-                    "input": "도구 결과를 바탕으로 추세 데이터의 분석을 완료해주세요. 추세의 특성과 이상치 유형을 상세히 설명하고, 이상치가 위치한 인덱스를 정확히 명시해주세요."
+                    "input": f"도구 결과를 바탕으로 추세 데이터의 분석을 완료해주세요. 추세의 방향(증가/감소/안정적)과 특성, "
+                             f"이상치 유형을 상세히 설명하고, 이상치가 위치한 인덱스를 정확히 명시해주세요. "
+                             f"추세 강도는 {trend_strength}입니다."
                 })
-                ai_follow_up = llm_with_tools.invoke(follow_up_prompt)
+                structured_result = structured_llm.invoke(follow_up_prompt)
+                analysis_content = structured_result.llm_analysis
             
-            messages.append(ai_follow_up)
-            content = ai_follow_up.content
+            # 에이전트 이름으로 메시지 추가
+            ai_message_with_name = AIMessage(content=analysis_content, name="trend_analyzer")
+            messages.append(ai_message_with_name)
+            
+            # 추세 분석 결과에 강도 정보 추가
+            structured_result.strength = trend_strength
+            
+            # 구조화된 결과에서 추세 분석 결과 가져오기
+            trend_analysis = structured_result.model_dump()
         else:
+            # 도구 호출이 없는 경우, 직접 구조화된 출력 요청
             content = ai_message.content
             
-        # LLM 응답에서 이상치 정보 추출
-        anomalies = []
-        anomaly_types = ["PersistentLevelShiftUp", "PersistentLevelShiftDown", 
-                         "TransientLevelShiftUp", "TransientLevelShiftDown", 
-                         "SingleSpike", "SingleDip", "MultipleSpikes", "MultipleDips"]
-        
-        for anomaly_type in anomaly_types:
-            if anomaly_type in content:
-                # 해당 이상치 유형이 언급된 경우, 인덱스 정보 추출 시도
-                # 인덱스 패턴 검색: 숫자, 인덱스, index 등의 키워드 주변 숫자 찾기
-                index_patterns = [
-                    rf"{anomaly_type}.*?인덱스\s*?(\d+)",
-                    rf"{anomaly_type}.*?index\s*?(\d+)",
-                    rf"{anomaly_type}.*?위치\s*?(\d+)"
-                ]
-                
-                for pattern in index_patterns:
-                    matches = re.findall(pattern, content, re.IGNORECASE)
-                    if matches:
-                        for match in matches:
-                            try:
-                                index = int(match)
-                                anomalies.append({
-                                    "type": anomaly_type,
-                                    "index": index,
-                                    "confidence": 0.9  # LLM이 명시적으로 언급했으므로 높은 신뢰도
-                                })
-                            except ValueError:
-                                pass
-        
-        # 추세 방향 추출
-        direction = "unknown"
-        if "증가" in content or "상승" in content or "increasing" in content:
-            direction = "증가"
-        elif "감소" in content or "하락" in content or "decreasing" in content:
-            direction = "감소"
-        elif "안정" in content or "일정" in content or "stable" in content:
-            direction = "안정적"
+            # 구조화된 출력 형식으로 LLM 재호출
+            structured_llm = llm.with_structured_output(TrendAnalysis)
+            structured_prompt = f"""
+            추세 데이터 분석 결과를 바탕으로 TrendAnalysis 구조로 정보를 제공해주세요.
+            추세의 방향(증가/감소/안정적)과 발견된 이상치가 있다면 각각의 인덱스와 유형을 정확히 지정해주세요.
             
-        # 에이전트 이름으로 메시지 추가 및 결과 생성
-        ai_message_with_name = AIMessage(content=content, name="trend_analyzer")
-        
-        # 추세 분석 결과 생성
-        trend_analysis = {
-            "direction": direction,
-            "anomalies": anomalies,
-            "strength": float(state.get("decomposition_data", {}).get("stats", {}).get("trend_strength", 0)),
-            "llm_analysis": content,
-            "visual_analysis": True if visualization_content else False  # 시각적 분석 수행 여부 표시
-        }
+            추세 강도는 {trend_strength}입니다.
+            이전 분석: {content}
+            """
+            structured_result = structured_llm.invoke([HumanMessage(content=structured_prompt)])
+            
+            # 에이전트 이름으로 메시지 추가
+            ai_message_with_name = AIMessage(content=structured_result.llm_analysis or content, name="trend_analyzer")
+            messages.append(ai_message_with_name)
+            
+            # 추세 분석 결과에 강도 정보 추가
+            structured_result.strength = trend_strength
+            
+            # 구조화된 결과에서 추세 분석 결과 가져오기
+            trend_analysis = structured_result.model_dump()
         
         return {
-            "messages": messages[:-1] + [ai_message_with_name],  # 마지막 메시지만 이름 추가
-            "trend_analysis": [trend_analysis]
+            "messages": messages,
+            "trend_analysis": [trend_analysis]  # 리스트 형식으로 반환해야 함
         }
     
     return trend_analyzer_agent

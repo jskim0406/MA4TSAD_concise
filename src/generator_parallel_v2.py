@@ -26,19 +26,19 @@ try:
     from langchain.globals import set_debug
     
     # Parallel Sentinel V2 구성 요소 임포트
-    from parallel_sentinel_v2.agents import (
+    from src.parallel_sentinel_v2.agents import (
         create_supervisor_agent, create_original_time_series_analyzer_agent,
         create_trend_analyzer_agent, create_seasonality_analyzer_agent,
         create_remainder_analyzer_agent
     )
     # 도구 정의 - 카테고리별로 구분하여 바인딩
-    from parallel_sentinel_v2.tools import (
+    from src.parallel_sentinel_v2.tools import (
         visualization_tools, statistics_tools, 
         frequency_tools, transformation_tools
     )
-    from parallel_sentinel_v2.graph import create_workflow, run_workflow
-    from parallel_sentinel_v2.utils.llm_utils import init_llm
-    from parallel_sentinel_v2.utils.ts_utils import quantize_time_series, get_quantization_info
+    from src.parallel_sentinel_v2.graph import create_workflow, run_workflow
+    from src.parallel_sentinel_v2.utils.llm_utils import init_llm
+    from src.parallel_sentinel_v2.utils.ts_utils import quantize_time_series, get_quantization_info
 
 except ImportError as e:
     print(f"오류: 필요한 라이브러리를 임포트할 수 없습니다: {e}")
