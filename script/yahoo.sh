@@ -8,20 +8,7 @@ RETRIEVE_NEGATIVE_NUM=1
 RETRIEVE_DATABASE_RATIO=1
 DELETE_ZERO=1
 
-MODEL_ENGINE="gemini-2.5-pro-exp-03-25"
-
-# openai model list
-## "gpt-4o-mini" : mini version of gpt-4o. baee model.
-## "gpt-4o-2024-05-13" : multimodal earlier version of gpt-4o
-## "gpt-4-1106-preview" : official code default argument value
-## etc...?
-
-# google model list
-## "gemini-2.0-flash-001" : base model.
-## "gemini-2.0-flash-lite-001" : cost efficient. test model
-## "gemini-2.5-pro-exp-03-25" : best performance. best model
-## "gemini-2.0-flash-thinking-exp-01-21" : par with gemini 2.5 pro, but not best
-## "gemini-1.5-flash-002" : old version, will be expired. but cost efficient
+MODEL_ENGINE="gemini-2.5-flash-preview-04-17" # "gemini-2.5-pro-preview-05-06"
 
 DATA_ROOT_DIR="data/Yahoo/ydata-labeled-time-series-anomalies-v1_0"
 SAVE_DIR="result_yahoo_gemini"
