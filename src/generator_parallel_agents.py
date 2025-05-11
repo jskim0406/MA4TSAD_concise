@@ -20,6 +20,7 @@ load_dotenv(find_dotenv())
 # LangChain 및 관련 모듈 임포트
 try:
     from langsmith import traceable, trace
+    from langsmith.run_helpers import get_current_run_tree
     from langchain.globals import set_debug
     set_debug(True)
     print("langchain 디버깅 모드 활성화")
@@ -537,7 +538,7 @@ def research_agents(args, ts_infer_data: str) -> Dict[str, Any]:
         }
     }
     
-    # LangSmith 태그 및 메타데이터 설정
+    # LangSmith 태그 및 메타데이터 설정₩
     langsmith_tags = ["time_series", "anomaly_detection", "parallel_agents"]
     
     # 메타데이터 강화
@@ -578,16 +579,19 @@ def research_agents(args, ts_infer_data: str) -> Dict[str, Any]:
         
         # LangSmith에 결과 메타데이터 추가
         if os.environ.get("LANGCHAIN_TRACING_V2") == "true":
-            current_run = trace.current_run()
-            if current_run:
-                current_run.metadata["execution_time_seconds"] = elapsed_time
-                current_run.metadata["is_anomaly"] = analysis_result["is_anomaly"]
-                if analysis_result["is_anomaly"]:
-                    current_run.metadata["anomalies_count"] = len(analysis_result["anomalies"])
-                    current_run.metadata["anomaly_type"] = analysis_result["anomaly_type"]
-                    current_run.tags.append(f"anomaly_{analysis_result['anomaly_type']}")
-                    current_run.tags.append(f"alert_{analysis_result['alarm_level']}")
-        
+            try:
+                current_run = get_current_run_tree()
+                if current_run:
+                    current_run.metadata["execution_time_seconds"] = elapsed_time
+                    current_run.metadata["is_anomaly"] = analysis_result["is_anomaly"]
+                    if analysis_result["is_anomaly"]:
+                        current_run.metadata["anomalies_count"] = len(analysis_result["anomalies"])
+                        current_run.metadata["anomaly_type"] = analysis_result["anomaly_type"]
+                        current_run.tags.append(f"anomaly_{analysis_result['anomaly_type']}")
+                        current_run.tags.append(f"alert_{analysis_result['alarm_level']}")
+            except Exception as e:
+                # 추적 기능에 오류가 발생해도 메인 기능에 영향을 주지 않도록 처리
+                print(f"[research_agents] LangSmith 메타데이터 추가 중 오류 발생(무시됨): {e}")
         return analysis_result
         
     except Exception as e:
