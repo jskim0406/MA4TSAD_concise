@@ -16,7 +16,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 
 from src.generator import get_llm_response
-from src.generator_parallel_v2 import research_agents
+from src.generator_parallel_agents import research_agents
 
 from Prompt_template import PromptTemplate
 from utils import find_most_similar_series_fast, affine_transform, find_anomalies, find_zero_sequences
