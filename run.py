@@ -480,7 +480,7 @@ def main():
             ### WIP ###
 
             breakpoint()
-            response_multi, raw_response_multi, usage_multi = research_agents(args, ts_infer_data=cur_data)
+            response = research_agents(args, ts_infer_data=cur_data)
             breakpoint()
 
             ### WIP ###
