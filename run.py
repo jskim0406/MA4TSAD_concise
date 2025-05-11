@@ -16,7 +16,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 
 from src.generator import get_llm_response
-from src.generator_parallel_v2 import *
+from src.generator_parallel_v2 import research_agents
 
 from Prompt_template import PromptTemplate
 from utils import find_most_similar_series_fast, affine_transform, find_anomalies, find_zero_sequences
@@ -480,7 +480,7 @@ def main():
             ### WIP ###
 
             breakpoint()
-            response_multi, raw_response_multi, usage_multi = get_llm_response(args, ts_infer_data=cur_data)
+            response_multi, raw_response_multi, usage_multi = research_agents(args, ts_infer_data=cur_data)
             breakpoint()
 
             ### WIP ###
