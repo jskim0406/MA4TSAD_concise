@@ -561,7 +561,7 @@ def research_agents(args, ts_infer_data: str) -> Dict[str, Any]:
     # 병렬 시계열 분석 워크플로우 실행
     try:
         with trace(
-            name="yahoo-A1Benchmark",
+            name="yahoo-A1Benchmark-test-30samples",
             run_type="chain",
             tags=langsmith_tags,
             metadata=langsmith_metadata
